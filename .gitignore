@@ -8,6 +8,7 @@ __pycache__
 venv/
 .env/
 env/
+env_scripts/
 
 # Jupyter Notebooks
 .ipynb_checkpoints
@@ -16,6 +17,7 @@ env/
 # PyTorch model files
 *.pt
 *.pth
+*.ckpt 
 
 # Data files
 *.h5
@@ -23,6 +25,7 @@ env/
 *.tsv
 *.json
 *.xlsx
+*.pkl
 
 # Logs
 *.log
@@ -80,6 +83,7 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+wandb/
 
 # mypy
 .mypy_cache/
