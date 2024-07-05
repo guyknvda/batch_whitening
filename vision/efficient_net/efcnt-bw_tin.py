@@ -36,6 +36,7 @@ VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
 HPARAM_OPT='INFER'
+# HPARAM_OPT='OFF'
  
 
 ############################################
@@ -423,7 +424,7 @@ def set_trial_params(config,trial):
     config['lr_scheduler']['gamma'] = trial.suggest_categorical('lr_sched_gamma',[0.9,0.95,0.99])
 
     config['model']['conv_stem_type'] = trial.suggest_categorical('conv_stem_type',[1,2])
-    config['model']['mbconv_type'] = trial.suggest_categorical('mbconv_type',[1,2])
+    config['model']['mbconv_type'] = trial.suggest_categorical('mbconv_type',[1,2,3])
 
     config['model']['batch_whitening_momentum'] = trial.suggest_float('batch_whitening_momentum',0.9,0.99,step=0.01)
     config['model']['batch_whitening_epsilon'] = trial.suggest_float('batch_whitening_epsilon', 1e-5, 1e-3, step=5e-5)
@@ -441,7 +442,7 @@ def objective(trial):
 
     data_set = create_data_module(config)
     
-    config['trainer']['max_epochs'] = 30
+    config['trainer']['max_epochs'] = 50
     config['trainer']['enable_checkpointing']=False
     callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
                 CustomWarmUpCallback(5000)]  
@@ -476,13 +477,13 @@ if __name__ == "__main__":
         else:
             print('starting new study')
             study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=5)
+        study.optimize(objective, n_trials=10)
         with open(study_filename, 'wb') as file:
             pickle.dump(study, file)        
         # Print the best hyperparameters found
         print("Best hyperparameters: ", study.best_trial.params)
     elif HPARAM_OPT=='INFER':
-        study_filename='study_0704.pkl'
+        study_filename='study.pkl'
         print('='*20,f'HPARAM OPT INFER on {study_filename}','='*20)
         if os.path.exists(study_filename):
             print('loading study')

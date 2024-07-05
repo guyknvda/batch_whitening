@@ -62,9 +62,10 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     # Update the mean and variance using moving average
     # running_mean = (1.0 - momentum) * running_mean + momentum * mean
     running_mean = mean         # no running mean (alpha = momentum = 1)
-    cov_I = torch.eye(n_features).to(running_cov.device)
+    cov_I = torch.eye(n_features).to(running_cov.device) 
     if cov_warmup:
-        running_cov = (1.0 - momentum) * cov_I + momentum * cov
+        x_var = torch.diag_embed(torch.diag(cov))
+        running_cov = (1.0 - momentum) * x_var + momentum * cov
     else:    
         running_cov = (1.0 - momentum) * running_cov + momentum * cov
     L = torch.linalg.cholesky(running_cov + eps*cov_I)
