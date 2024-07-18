@@ -35,7 +35,7 @@ VALID_MODELS = (
 )
 
 
-def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
+def batch_orthonorm(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
     n_features = X.shape[1]
@@ -62,11 +62,13 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     # Update the mean and variance using moving average
     # running_mean = (1.0 - momentum) * running_mean + momentum * mean
     running_mean = mean         # no running mean (alpha = momentum = 1)
-    cov_I = torch.eye(n_features).to(running_cov.device) 
+    cov_I = torch.eye(n_features).to(running_cov.device)     
+    # during warmup, we're not updating running_cov but using a statistics of current batch 
     if cov_warmup:
         x_var = torch.diag_embed(torch.diag(cov))
         running_cov = (1.0 - momentum) * x_var + momentum * cov
-    else:    
+    # when warm up is done, running_cov is updated only during training
+    elif torch.is_grad_enabled():    
         running_cov = (1.0 - momentum) * running_cov + momentum * cov
     L = torch.linalg.cholesky(running_cov + eps*cov_I)
     if len(X.shape) == 2:
@@ -76,11 +78,10 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
         X_hat = X-running_mean.view(1,n_features,1,1)
         X_hat = X_hat.permute(1,0,2,3).reshape(X.shape[1],-1)
         Y = torch.linalg.solve_triangular(L,X_hat,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
-    # Y = gamma.view(shape) * Y + beta.view(shape)  # Scale and shift
     return Y, running_mean.data, running_cov.data
 
 
-
+# batch_orthonorm_obsolete is deprecated. 
 def batch_orthonorm_obsolete(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
@@ -130,36 +131,6 @@ def batch_orthonorm_obsolete(X, gamma, beta, running_mean=None, running_cov=None
     return Y, running_mean.data, running_cov.data
 
 
-class BatchWhitening(nn.Module):
-    # num_features: the number of outputs for a fully connected layer or the
-    # number of output channels for a convolutional layer. num_dims: 2 for a
-    # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.1,eps=1e-5):
-        super().__init__()
-        # The scale parameter and the shift parameter (model parameters) are
-        # initialized to 1 and 0, respectively
-        self.momentum = momentum
-        self.eps = eps
-        self.gamma = nn.Parameter(torch.ones(num_features))
-        self.beta = nn.Parameter(torch.zeros(num_features))
-        # The variables that are not model parameters are initialized to 0 and 1
-        self.register_buffer('running_mean', torch.zeros(num_features))
-        self.register_buffer('running_cov', torch.eye(num_features))
-
-    def forward(self, X):
-        # If X is not on the main memory, copy moving_mean and moving_var to
-        # the device where X is located
-        if self.running_mean.device != X.device:
-            self.running_mean = self.running_mean.to(X.device)
-            self.running_cov = self.running_cov.to(X.device)
-        # Save the updated running_mean and moving_var
-        Y, self.running_mean, self.running_cov = batch_orthonorm(
-            X, self.gamma, self.beta, self.running_mean,
-            self.running_cov, eps=self.eps, momentum=self.momentum)
-
-        return Y
-
-
 
 class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
@@ -190,135 +161,13 @@ class BatchWhiteningBlock(nn.Module):
             self.running_cov = self.running_cov.to(X.device)
         # Save the updated running_mean and moving_var
         Y, self.running_mean, self.running_cov = batch_orthonorm(
-            X, self.gamma, self.beta, self.running_mean,
-            self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
+            X, self.running_mean, self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
         # add the bias
         shape = (1,self.n_bias_features) if len(X.shape)==2 else (1,self.n_bias_features,1,1)
         Y += self.beta.view(shape)
         return Y
-
-
-
-
-class MBConvBlockBW_old(nn.Module):
-    """Mobile Inverted Residual Bottleneck Block.
-
-    Args:
-        block_args (namedtuple): BlockArgs, defined in utils.py.
-        global_params (namedtuple): GlobalParam, defined in utils.py.
-        image_size (tuple or list): [image_height, image_width].
-
-    References:
-        [1] https://arxiv.org/abs/1704.04861 (MobileNet v1)
-        [2] https://arxiv.org/abs/1801.04381 (MobileNet v2)
-        [3] https://arxiv.org/abs/1905.02244 (MobileNet v3)
-    """
-
-    def __init__(self, block_args, global_params, image_size=None):
-        super().__init__()
-        self._block_args = block_args
-        self._bn_mom = 1 - global_params.batch_norm_momentum  # pytorch's difference from tensorflow
-        self._bn_eps = global_params.batch_norm_epsilon
-        self._bw_mom = 1 - global_params.batch_whitening_momentum  # pytorch's difference from tensorflow
-        self._bw_eps = global_params.batch_whitening_epsilon
-
-
-        self.has_se = (self._block_args.se_ratio is not None) and (0 < self._block_args.se_ratio <= 1)
-        self.id_skip = block_args.id_skip  # whether to use skip connection and drop connect
-
-        # Expansion phase (Inverted Bottleneck)
-        inp = self._block_args.input_filters  # number of input channels
-        oup = self._block_args.input_filters * self._block_args.expand_ratio  # number of output channels
-        if self._block_args.expand_ratio != 1:
-            Conv2d = get_same_padding_conv2d(image_size=image_size)
-            self._bw0 = BatchWhitening(num_features=inp, momentum=self._bw_mom, eps=self._bw_eps)
-            self._expand_conv = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
-            self._bn0 = nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
-            # image_size = calculate_output_image_size(image_size, 1) <-- this wouldn't modify image_size
-
-        # Depthwise convolution phase
-        k = self._block_args.kernel_size
-        s = self._block_args.stride
-        Conv2d = get_same_padding_conv2d(image_size=image_size)
-        self._depthwise_conv = Conv2d(
-            in_channels=oup, out_channels=oup, groups=oup,  # groups makes it depthwise
-            kernel_size=k, stride=s, bias=False)
-        self._bn1 = nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
-        self._bw1 = BatchWhitening(num_features=oup, momentum=self._bw_mom, eps=self._bw_eps)
-        image_size = calculate_output_image_size(image_size, s)
-
-        # Squeeze and Excitation layer, if desired
-        if self.has_se:
-            Conv2d = get_same_padding_conv2d(image_size=(1, 1))
-            num_squeezed_channels = max(1, int(self._block_args.input_filters * self._block_args.se_ratio))
-            self._se_reduce = Conv2d(in_channels=oup, out_channels=num_squeezed_channels, kernel_size=1)
-            self._se_expand = Conv2d(in_channels=num_squeezed_channels, out_channels=oup, kernel_size=1)
-
-        # Pointwise convolution phase
-        final_oup = self._block_args.output_filters
-        Conv2d = get_same_padding_conv2d(image_size=image_size)
-        self._bw2 = BatchWhitening(num_features=oup, momentum=self._bw_mom, eps=self._bw_eps)
-        self._project_conv = Conv2d(in_channels=oup, out_channels=final_oup, kernel_size=1, bias=False)
-        self._bn2 = nn.BatchNorm2d(num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps)
-        self._swish = MemoryEfficientSwish()
-
-    def forward(self, inputs, drop_connect_rate=None):
-        """MBConvBlock's forward function.
-
-        Args:
-            inputs (tensor): Input tensor.
-            drop_connect_rate (bool): Drop connect rate (float, between 0 and 1).
-
-        Returns:
-            Output of this block after processing.
-        """
-
-        # Expansion and Depthwise Convolution
-        x = inputs
-        if self._block_args.expand_ratio != 1:
-            # x = self._bw0(x)
-            x = self._expand_conv(inputs)
-            x = self._bn0(x)
-            x = self._swish(x)
-
-        
-        x = self._depthwise_conv(x)
-        x = self._bn1(x)
-        x = self._swish(x)
-
-        # x = self._bw1(x)
-
-        # Squeeze and Excitation
-        if self.has_se:
-            x_squeezed = F.adaptive_avg_pool2d(x, 1)
-            x_squeezed = self._se_reduce(x_squeezed)
-            x_squeezed = self._swish(x_squeezed)
-            x_squeezed = self._se_expand(x_squeezed)
-            x = torch.sigmoid(x_squeezed) * x
-
-        # Pointwise Convolution
-        # x = self._bw2(x)
-        x = self._project_conv(x)
-        x = self._bn2(x)
-
-        # Skip connection and drop connect
-        input_filters, output_filters = self._block_args.input_filters, self._block_args.output_filters
-        if self.id_skip and self._block_args.stride == 1 and input_filters == output_filters:
-            # The combination of skip connection and drop connect brings about stochastic depth.
-            if drop_connect_rate:
-                x = drop_connect(x, p=drop_connect_rate, training=self.training)
-            x = x + inputs  # skip connection
-        return x
-
-    def set_swish(self, memory_efficient=True):
-        """Sets swish function as memory efficient (for training) or standard (for export).
-
-        Args:
-            memory_efficient (bool): Whether to use memory-efficient version of swish.
-        """
-        self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
 
 
 class SEBlock(nn.Module):
