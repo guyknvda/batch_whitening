@@ -15,6 +15,97 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+import sys
+sys.path.append('../..')
+#from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
+
+def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1, cov_warmup=False):
+    '''
+    https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
+    X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
+    '''
+    assert len(X.shape) == 3
+    n_features = X.shape[2]
+
+    # Calculate the mean and covariance on the channel dimension (axis=2). Here we
+    # need to maintain the shape of X, so that the broadcasting operation can be carried out later,
+    # i.e., shape = (1, 1, n_features)
+    mean = X.mean(dim=(0, 1))
+
+    # Move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
+    # so we simply flatten the last two dims.
+    Xtmp = X.permute(2, 0, 1)
+    Xtmp = Xtmp.reshape(Xtmp.shape[0], -1)
+    cov = torch.cov(Xtmp, correction=0)
+
+    # In training mode, the current mean and variance are used.
+    # Update the mean and variance using moving average
+
+    running_mean = mean  # no running mean
+
+    if torch.is_grad_enabled():
+        if cov_warmup:
+            x_var = torch.diag_embed(torch.diag(cov))
+            running_cov = (1.0 - momentum) * x_var + momentum * cov
+        else:
+            running_cov = (1.0 - momentum) * running_cov + momentum * cov
+
+    X_hat = (X - running_mean.view(1, 1, n_features))
+    # Move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
+    # so we simply flatten the last two dims.
+    X_hat = X_hat.permute(2, 0, 1)
+    permuted_org_shape = X_hat.shape
+    X_hat = X_hat.reshape(X_hat.shape[0], -1)
+
+    I = torch.eye(n_features).to(running_cov.device)
+    L = torch.linalg.cholesky(running_cov + eps * I)
+    Y = torch.linalg.solve_triangular(L, X_hat, upper=False)
+    Y = Y.reshape(permuted_org_shape)
+    # Permute to the original channel order (move what now is the first channel, C, to be last)
+    Y = Y.permute(1, 2, 0)
+
+    return Y, running_mean.data, running_cov.data
+
+
+class BatchWhiteningBlock(nn.Module):
+    # num_features: the number of outputs for a fully connected layer or the
+    # number of output channels for a convolutional layer. num_dims: 2 for a
+    # fully connected layer and 4 for a convolutional layer
+    def __init__(self, num_features,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+        super().__init__()
+        # The scale parameter and the shift parameter (model parameters) are
+        # initialized to 1 and 0, respectively
+        self.n_features=num_features
+        self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
+        self.momentum = momentum
+        self.eps = eps
+        self.cov_warmup=False
+        self.gamma = nn.Parameter(torch.ones(num_features))
+        # The variables that are not model parameters are initialized to 0 and 1
+        self.register_buffer('running_mean', torch.zeros(num_features))
+        self.register_buffer('running_cov', torch.eye(num_features))
+        self.pre_bias_block=pre_bias_block
+
+        self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
+
+    def forward(self, X):
+        # If X is not on the main memory, copy moving_mean and moving_var to
+        # the device where X is located
+        if self.running_mean.device != X.device:
+            self.running_mean = self.running_mean.to(X.device)
+            self.running_cov = self.running_cov.to(X.device)
+        # Save the updated running_mean and moving_var
+        Y, self.running_mean, self.running_cov = batch_orthonorm(
+            X, self.gamma, self.beta, self.running_mean,
+            self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
+        if self.pre_bias_block is not None:
+            Y=self.pre_bias_block(Y)
+        # add the bias
+        shape = (1, 1, self.n_bias_features)
+        Y = Y + self.beta.view(shape)
+        return Y
+
+
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
@@ -95,9 +186,9 @@ class Block(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_1 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -114,6 +205,7 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    batch_whitening: bool = False
 
 class GPT(nn.Module):
 
@@ -128,7 +220,7 @@ class GPT(nn.Module):
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+            ln_f = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
@@ -146,6 +238,33 @@ class GPT(nn.Module):
 
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+
+        # create a list of all BW layers in the model
+        self.bw_layers = self._get_bw_layers()
+        self.curr_cov_warmup=False
+        self.set_bw_cov_warmup(True)
+
+    def _get_bw_layers(self):
+        bw_layers = []
+
+        def _extract_layers_recursive(module):
+            for name, submodule in module.named_children():
+
+                if isinstance(submodule, BatchWhiteningBlock):
+                    bw_layers.append(submodule)
+                # If the submodule has children, recursively call this function
+                if len(list(submodule.children())) > 0:
+                    _extract_layers_recursive(submodule)
+
+        _extract_layers_recursive(self)
+        return bw_layers
+
+    def set_bw_cov_warmup(self,cov_warmup):
+        if self.curr_cov_warmup != cov_warmup:
+            for layer in self.bw_layers:
+                    layer.cov_warmup = cov_warmup
+            self.curr_cov_warmup = cov_warmup
+        return
 
     def get_num_params(self, non_embedding=True):
         """

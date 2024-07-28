@@ -17,6 +17,9 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 """
 
 import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+
 import time
 import math
 import pickle
@@ -54,6 +57,7 @@ n_head = 12
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
+batch_whitening = True
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -71,10 +75,46 @@ backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
-compile = True # use PyTorch 2.0 to compile the model to be faster
+compile = False # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open('configurator.py').read()) # overrides from command line or config file
+#exec(open('configurator.py').read()) # overrides from command line or config file
+# overrides from config file
+config_file = 'config/train_shakespeare_char.py'
+print(f"Overriding config with {config_file}:")
+#################################################
+out_dir = 'out-shakespeare-char'
+eval_interval = 250 # keep frequent because we'll overfit
+eval_iters = 200
+log_interval = 10 # don't print too too often
+
+# we expect to overfit on this small dataset, so only save when val improves
+always_save_checkpoint = False
+
+wandb_log = False # override via command line if you like
+wandb_project = 'shakespeare-char'
+wandb_run_name = 'mini-gpt'
+
+dataset = 'shakespeare_char'
+gradient_accumulation_steps = 1
+batch_size = 64
+block_size = 256 # context of up to 256 previous characters
+
+# baby GPT model :)
+n_layer = 6
+n_head = 6
+n_embd = 384
+dropout = 0.2
+
+learning_rate = 1e-3 # with baby networks can afford to go a bit higher
+max_iters = 5000
+lr_decay_iters = 5000 # make equal to max_iters usually
+min_lr = 1e-4 # learning_rate / 10 usually
+beta2 = 0.99 # make a bit bigger because number of tokens per iter is small
+
+warmup_iters = 100 # not super necessary potentially
+######################################################
+
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
@@ -145,7 +185,7 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
+                  bias=bias, vocab_size=None, dropout=dropout, batch_whitening=batch_whitening) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -227,6 +267,7 @@ def estimate_loss():
     model.train()
     return out
 
+
 # learning rate decay scheduler (cosine with warmup)
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
@@ -286,6 +327,9 @@ while True:
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
     if iter_num == 0 and eval_only:
         break
+
+    if iter_num == eval_interval:
+        model.set_bw_cov_warmup(False)
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     # and using the GradScaler if data type is float16
