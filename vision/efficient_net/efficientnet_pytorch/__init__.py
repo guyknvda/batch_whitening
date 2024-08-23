@@ -1,6 +1,6 @@
 __version__ = "0.7.1"
 from .model import EfficientNet, VALID_MODELS
-from .model_bw import EfficientNetBW
+from .model_bw import EfficientNetBW,rank_and_avg_corr
 from .utils import (
     GlobalParams,
     BlockArgs,

@@ -34,6 +34,20 @@ VALID_MODELS = (
     'efficientnet-l2'
 )
 
+def rank_and_avg_corr(x):
+    # flatten x from [B,C,H,W] to [C,B*H*W]
+    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1)
+    # compute corr matrix
+    corr_matrix = torch.corrcoef(x_f)
+    # Extract upper triangular part (excluding diagonal)
+    upper_tri = torch.triu(corr_matrix, diagonal=1)
+    # Compute average of cross-correlation coefficients
+    avg_corr = upper_tri.sum() / (upper_tri.numel() - upper_tri.diag().numel())
+    rank = torch.linalg.matrix_rank(x_f)/x.shape[1]
+    return rank,avg_corr
+
+
+
 
 def batch_orthonorm(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
