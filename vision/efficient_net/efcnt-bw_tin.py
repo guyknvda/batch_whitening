@@ -21,7 +21,7 @@ import lightning as L
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 
-from efficientnet_pytorch import EfficientNetBW,rank_and_avg_corr
+from efficientnet_pytorch import EfficientNetBW,comp_avg_corr,get_rank
 import wandb
 import optuna
 
@@ -35,8 +35,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
-HPARAM_OPT='INFER'
-# HPARAM_OPT='OFF'
+# HPARAM_OPT='INFER'
+HPARAM_OPT='OFF'
  
 
 ############################################
@@ -281,32 +281,24 @@ class TinyImageNetModule(L.LightningModule):
 
 ############################################
 # Training the model
-
-def hook_fn(module, input, output):
+def avg_corr_hook_fn(module, input, output):
     if isinstance(module, nn.Conv2d):
         # Take the first element of the input tuple
         input_tensor = input[0]
         
         # Compute average cross-correlation
-        rank, avg_corr = rank_and_avg_corr(input_tensor)
+        avg_corr = comp_avg_corr(input_tensor)
         
         # Store the result
         if not hasattr(module, 'avg_corr_list'):
             module.avg_corr_list = []
         module.avg_corr_list.append(avg_corr.item())
 
-        if not hasattr(module, 'rank'):
-            module.rank = []
-        module.rank.append(rank.item())
-
-
 def register_hooks(model):
     for module in model.modules():
         if isinstance(module, nn.Conv2d):
-            module.register_forward_hook(hook_fn)
+            module.register_forward_hook(avg_corr_hook_fn)
 
-
-# todo : complete
 def collect_and_rank_correlations(model):
     all_correlations = []
     
@@ -318,10 +310,7 @@ def collect_and_rank_correlations(model):
     # Convert to tensor for easier manipulation
     corr_tensor = torch.tensor(all_correlations)
     
-    # Compute ranks (ascending order, so we'll use negative values)
-    ranks = torch.argsort(torch.argsort(-corr_tensor)) + 1
-    
-    return corr_tensor, ranks
+    return corr_tensor
 
 
 
@@ -572,7 +561,7 @@ if __name__ == "__main__":
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
         config['model']['mbconv_type']=1
         config['trainer']['max_epochs'] = 50
-        config['dataset']['batch_size'] = 512
+        config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
         config['trainer']['accumulate_grad_batches'] = 1
         print(config)
