@@ -35,18 +35,29 @@ VALID_MODELS = (
 )
 
 def comp_avg_corr(x):
-    # flatten x from [B,C,H,W] to [C,B*H*W]
-    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1)
-    # compute corr matrix
-    corr_matrix = torch.corrcoef(x_f)
-    # Extract upper triangular part (excluding diagonal)
-    upper_tri = torch.triu(corr_matrix, diagonal=1)
-    # Compute average of cross-correlation coefficients
-    avg_corr = upper_tri.sum() / (upper_tri.numel() - upper_tri.diag().numel())
+    with torch.no_grad():
+        # flatten x from [B,C,H,W] to [C,B*H*W]
+        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+        # compute corr matrix
+        corr_matrix = torch.corrcoef(x_f)
+        # Extract upper triangular part (excluding diagonal)
+        upper_tri = torch.triu(corr_matrix, diagonal=1)
+        # Compute average of cross-correlation coefficients
+        avg_corr = upper_tri.sum() / (upper_tri.numel() - upper_tri.diag().numel())
     return avg_corr
 
+def comp_cov_cond(x):
+    # flatten x from [B,C,H,W] to [C,B*H*W]
+    with torch.no_grad():
+        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+        cov_cond=torch.linalg.cond(torch.cov(x_f))
+    return cov_cond
+
+
+
+
 def get_rank(x):
-    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1)
+    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
     return torch.linalg.matrix_rank(x_f)/x.shape[1]
 
 

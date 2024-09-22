@@ -21,7 +21,7 @@ import lightning as L
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 
-from efficientnet_pytorch import EfficientNetBW,comp_avg_corr,get_rank
+from efficientnet_pytorch import EfficientNetBW,BatchWhiteningBlock,comp_avg_corr,get_rank,comp_cov_cond
 import wandb
 import optuna
 
@@ -35,8 +35,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
-# HPARAM_OPT='INFER'
-HPARAM_OPT='OFF'
+HPARAM_OPT='INFER'
+# HPARAM_OPT='OFF'
  
 
 ############################################
@@ -256,10 +256,15 @@ class TinyImageNetModule(L.LightningModule):
         preds = self.model(imgs)
         loss = self.loss_module(preds, labels)
         acc = (preds.argmax(dim=-1) == labels).float().mean()
-
         # Logs the accuracy per epoch to tensorboard (weighted average over batches)
         self.log("train_acc", acc, prog_bar=True, on_epoch=True)
         self.log("train_loss", loss, prog_bar=True, on_epoch=True)
+
+        
+        for idx, (name, module) in enumerate(self.model.named_modules()):
+            if hasattr(module, 'cov_cond_list'):
+                self.log(f"zl{idx:02}_cond_{name}",module.cov_cond_list[-1])
+
         return loss  # Return tensor to call ".backward" on
 
     def validation_step(self, batch, batch_idx):
@@ -282,35 +287,51 @@ class TinyImageNetModule(L.LightningModule):
 ############################################
 # Training the model
 def avg_corr_hook_fn(module, input, output):
-    if isinstance(module, nn.Conv2d):
-        # Take the first element of the input tuple
-        input_tensor = input[0]
-        
-        # Compute average cross-correlation
-        avg_corr = comp_avg_corr(input_tensor)
-        
-        # Store the result
-        if not hasattr(module, 'avg_corr_list'):
-            module.avg_corr_list = []
-        module.avg_corr_list.append(avg_corr.item())
+    # Take the first element of the input tuple
+    input_tensor = input[0]
+    
+    # Compute average cross-correlation
+    avg_corr = comp_avg_corr(input_tensor)
+    # Store the result
+    if not hasattr(module, 'avg_corr_list'):
+        module.avg_corr_list = []
+    module.avg_corr_list.append(avg_corr.item())
+    # module.avg_corr_list = [avg_corr.item()]
+
+
+def cond_hook_fn(module, input, output):
+    # Take the first element of the input tuple
+    input_tensor = input[0]
+
+    # compute condition number
+    cov_cond = comp_cov_cond(input_tensor)
+    # Store the result
+    if not hasattr(module, 'cov_cond_list'):
+        module.cov_cond_list = []
+    # module.cov_cond_list.append(cov_cond.item())
+    module.cov_cond_list = [cov_cond.item()]
+
 
 def register_hooks(model):
-    for module in model.modules():
-        if isinstance(module, nn.Conv2d):
-            module.register_forward_hook(avg_corr_hook_fn)
+    for name,module in model.named_modules():
+        if isinstance(module, BatchWhiteningBlock) or isinstance(module, nn.BatchNorm2d):
+            print(f'registering hook to {name}')
+            module.register_forward_hook(cond_hook_fn)
 
-def collect_and_rank_correlations(model):
+
+def save_cov_stats(model):
     all_correlations = []
+    # corr_stats=[]
+    cond_stats=[]
+    for name, module in model.named_modules():
+        if isinstance(module, BatchWhiteningBlock):
+            pass # TODO
+
+    return
+
+
     
-    for module in model.modules():
-        if isinstance(module, nn.Conv2d) and hasattr(module, 'avg_corr_list'):
-            avg_corr = sum(module.avg_corr_list) / len(module.avg_corr_list)
-            all_correlations.append(avg_corr)
-    
-    # Convert to tensor for easier manipulation
-    corr_tensor = torch.tensor(all_correlations)
-    
-    return corr_tensor
+
 
 
 
@@ -364,6 +385,7 @@ def create_model(config):
         model = TinyImageNetModule.load_from_checkpoint(config['train']['ckpt'])
     else:
         model = TinyImageNetModule(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'])
+    # register_hooks(model)
     return model
 
 
@@ -514,6 +536,7 @@ if __name__ == "__main__":
             pickle.dump(study, file)        
         # Print the best hyperparameters found
         print("Best hyperparameters: ", study.best_trial.params)
+
     elif HPARAM_OPT=='INFER':
         study_filename='study.pkl'
         print('='*20,f'HPARAM OPT INFER on {study_filename}','='*20)
@@ -526,7 +549,7 @@ if __name__ == "__main__":
         print(f'best trial: {study.best_trial.number}')
         print(f'best params: {study.best_params}')
         config = copy.deepcopy(config_defaults)
-        config['wandb']['name'] = 'nbw2_exp_b0'
+        config['wandb']['name'] = 'nbw2_exp_b0_best'
 
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
@@ -552,8 +575,8 @@ if __name__ == "__main__":
         # Run the main function
         # delete 'wandb' from config    
         config = copy.deepcopy(config_defaults)
-        config.pop('wandb') 
-        # config['wandb']['name'] = 'nbw2_exp_b0'
+        # config.pop('wandb') 
+        config['wandb']['name'] = 'nbw2_exp_b0_off'
         # config['model']['name'] = 'efficientnet-b3'
         # config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
         config['optimizer']['opt_name'] = 'AdamW'
