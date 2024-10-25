@@ -35,8 +35,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
-HPARAM_OPT='INFER'
-# HPARAM_OPT='OFF'
+# HPARAM_OPT='INFER'
+HPARAM_OPT='OFF'
  
 
 ############################################
@@ -192,7 +192,7 @@ def create_efficientnet_model(model_name, model_hparams, load_pretrained=False):
     return model
 
 class TinyImageNetModule(L.LightningModule):
-    def __init__(self, model_name, model_hparams, optimizer_name, optimizer_hparams,lr_scheduler_name, lr_scheduler_hparams):
+    def __init__(self, model_name, model_hparams, optimizer_name, optimizer_hparams,lr_scheduler_name, lr_scheduler_hparams,data_hparams):
         """TinyImageNetModule.
 
         Args:
@@ -260,9 +260,10 @@ class TinyImageNetModule(L.LightningModule):
         self.log("train_acc", acc, prog_bar=True, on_epoch=True)
         self.log("train_loss", loss, prog_bar=True, on_epoch=True)
 
-        
-        for idx, (name, module) in enumerate(self.model.named_modules()):
+        idx=0
+        for name, module in self.model.named_modules():
             if hasattr(module, 'cov_cond_list'):
+                idx+=1
                 self.log(f"zl{idx:02}_cond_{name}",module.cov_cond_list[-1])
 
         return loss  # Return tensor to call ".backward" on
@@ -384,8 +385,8 @@ def create_model(config):
         print(f"Found pretrained model at {config['train']['ckpt']}, loading...")
         model = TinyImageNetModule.load_from_checkpoint(config['train']['ckpt'])
     else:
-        model = TinyImageNetModule(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'])
-    # register_hooks(model)
+        model = TinyImageNetModule(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'],config['dataset'])
+    register_hooks(model)
     return model
 
 
@@ -453,7 +454,7 @@ def main(config):
 
 config_defaults = {'global_seed':42,
                 'wandb':{'mode':'online',
-                            'project':'efcnt_tin',
+                            'project':'bw-efcnt_tin',
                             'name':'bw_exp_b0',},
                     'dataset':{ 'data_dir':'/datasets/vision/tiny-imagenet-200',
                                 'batch_size':64,
@@ -554,7 +555,8 @@ if __name__ == "__main__":
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
         config['optimizer']['weight_decay'] = study.best_params['weight_decay']
-        config['dataset']['batch_size'] = study.best_params['batch_size']
+        # config['dataset']['batch_size'] = study.best_params['batch_size']
+        config['dataset']['batch_size'] = 32    # override due to performance issues (batch whitening gets extremely slow on larger batch size)
         config['model']['dropout_rate'] = study.best_params['dropout']
         config['lr_scheduler']['step_size'] = study.best_params['lr_sched_step_size']
         config['lr_scheduler']['gamma'] = study.best_params['lr_sched_gamma']
@@ -576,17 +578,17 @@ if __name__ == "__main__":
         # delete 'wandb' from config    
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
-        config['wandb']['name'] = 'nbw2_exp_b0_off'
         # config['model']['name'] = 'efficientnet-b3'
         # config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
         config['optimizer']['opt_name'] = 'AdamW'
         config['optimizer']['lr'] = 0.001
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
-        config['model']['mbconv_type']=1
+        config['model']['mbconv_type']=0
         config['trainer']['max_epochs'] = 50
         config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
         config['trainer']['accumulate_grad_batches'] = 1
+        config['wandb']['name'] = f"nbw2_exp_b0_off_bs{config['dataset']['batch_size']}"
         print(config)
 
         main(config)
