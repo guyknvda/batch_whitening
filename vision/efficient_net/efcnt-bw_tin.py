@@ -386,7 +386,7 @@ def create_model(config):
         model = TinyImageNetModule.load_from_checkpoint(config['train']['ckpt'])
     else:
         model = TinyImageNetModule(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'],config['dataset'])
-    register_hooks(model)
+    # register_hooks(model)
     return model
 
 
@@ -550,6 +550,7 @@ if __name__ == "__main__":
         print(f'best trial: {study.best_trial.number}')
         print(f'best params: {study.best_params}')
         config = copy.deepcopy(config_defaults)
+        # config.pop('wandb') 
         config['wandb']['name'] = 'nbw2_exp_b0_best'
 
         # set best params 
@@ -568,6 +569,7 @@ if __name__ == "__main__":
         config['model']['batch_whitening_epsilon'] = study.best_params['batch_whitening_epsilon']
 
         config['trainer']['max_epochs'] = 50
+        config['trainer']['devices'] = [1]
         print(config)
         # run the training
         main(config)
@@ -585,6 +587,7 @@ if __name__ == "__main__":
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
         config['model']['mbconv_type']=0
         config['trainer']['max_epochs'] = 50
+        # config['trainer']['devices'] = [1]
         config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
         config['trainer']['accumulate_grad_batches'] = 1
