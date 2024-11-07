@@ -95,8 +95,8 @@ class BWItnBlock(nn.Module):
         num_groups=1
         self.num_channels = num_features
         # The variables that are not model parameters are initialized to 0 and 1
-        self.register_buffer('running_mean', torch.zeros(num_features))
-        self.register_buffer('running_cov', torch.eye(num_features))
+        self.register_buffer('running_mean', torch.zeros(num_groups, self.num_channels, 1))
+        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(num_groups, self.num_channels, self.num_channels))
         self.pre_bias_block=pre_bias_block
 
         # self.gamma = nn.Parameter(torch.ones(num_features))
@@ -124,6 +124,7 @@ class BWItnBlock(nn.Module):
 
 
 BatchWhiteningBlock=BWItnBlock
+# BatchWhiteningBlock=BWCholeskyBlock
 
 
 

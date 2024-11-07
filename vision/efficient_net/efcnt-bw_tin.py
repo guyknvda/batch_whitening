@@ -12,6 +12,7 @@ from torchvision import models, datasets
 from torchvision import transforms as T
 
 import os
+import argparse
 import pickle
 from random import randint
 import urllib
@@ -518,6 +519,10 @@ def objective(trial):
     return trainer.callback_metrics['train_loss'].item()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train a neural network with specified GPU")
+    parser.add_argument('--gpu', type=int, default=0, help="GPU ID to use for training (default: 0)")
+    args = parser.parse_args()
+
     # change config if needed
     
     # config_defaults['trainer']['strategy'] = 'ddp_find_unused_parameters_true'       # enable on multi gpu machine
@@ -587,12 +592,11 @@ if __name__ == "__main__":
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
         config['model']['mbconv_type']=1
         config['trainer']['max_epochs'] = 50
-        config['trainer']['devices'] = [1]
+        config['trainer']['devices'] = [args.gpu]
         config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
         config['trainer']['accumulate_grad_batches'] = 1
         # config['wandb']['name'] = f"nbw2_exp_b0_off_bs{config['dataset']['batch_size']}"
         print(config)
-        torch.autograd.set_detect_anomaly(True)
         main(config)
 

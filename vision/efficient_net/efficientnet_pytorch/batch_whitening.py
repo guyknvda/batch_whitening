@@ -31,7 +31,8 @@ def get_rank(x):
 
 def fix_cov(c):
     a=0.9+0.1*torch.exp(-(c/0.9)**10)
-    # torch.diagonal(a).fill_(1.0)
+    a = a.clone()
+    torch.diagonal(a).fill_(1.0)
     return a*c
 
 def batch_orthonorm(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
@@ -183,7 +184,7 @@ def iter_norm_batch(X, running_mean=None, running_wm=None, T=10, eps=1e-5, momen
         running_mean = (1-momentum)*running_mean + momentum * mean.detach()
         running_wm = (1-momentum)*running_wm + momentum * wm.detach() 
     else:
-        xc = x - running_mean.view(1,n_channels,1)
+        xc = x - running_mean
         wm = running_wm
     xn = wm.matmul(xc)
     X_hat = xn.view(X.size(1), X.size(0), *X.size()[2:]).transpose(0, 1).contiguous()
