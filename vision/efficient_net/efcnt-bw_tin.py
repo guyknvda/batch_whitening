@@ -579,20 +579,20 @@ if __name__ == "__main__":
         # Run the main function
         # delete 'wandb' from config    
         config = copy.deepcopy(config_defaults)
-        # config.pop('wandb') 
+        config.pop('wandb') 
         # config['model']['name'] = 'efficientnet-b3'
         # config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
         config['optimizer']['opt_name'] = 'AdamW'
         config['optimizer']['lr'] = 0.001
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
-        config['model']['mbconv_type']=0
+        config['model']['mbconv_type']=1
         config['trainer']['max_epochs'] = 50
-        # config['trainer']['devices'] = [1]
+        config['trainer']['devices'] = [1]
         config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
         config['trainer']['accumulate_grad_batches'] = 1
-        config['wandb']['name'] = f"nbw2_exp_b0_off_bs{config['dataset']['batch_size']}"
+        # config['wandb']['name'] = f"nbw2_exp_b0_off_bs{config['dataset']['batch_size']}"
         print(config)
-
+        torch.autograd.set_detect_anomaly(True)
         main(config)
 

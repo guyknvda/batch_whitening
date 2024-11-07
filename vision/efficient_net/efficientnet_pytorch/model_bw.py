@@ -39,8 +39,7 @@ from .batch_whitening import *
 
 
 
-
-class BatchWhiteningBlock(nn.Module):
+class BWCholeskyBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
@@ -124,7 +123,7 @@ class BWItnBlock(nn.Module):
         return X_hat
 
 
-
+BatchWhiteningBlock=BWItnBlock
 
 
 

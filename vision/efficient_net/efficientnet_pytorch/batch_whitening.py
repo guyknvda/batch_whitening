@@ -12,7 +12,7 @@ def comp_avg_corr(x):
         # Extract upper triangular part (excluding diagonal)
         upper_tri = torch.triu(corr_matrix, diagonal=1)
         # Compute average of cross-correlation coefficients
-        avg_corr = upper_tri.sum() / (upper_tri.numel() - upper_tri.diag().numel())
+        avg_corr = upper_tri.abs().sum() / ((upper_tri.numel() - upper_tri.diag().numel())/2)
     return avg_corr
 
 def comp_cov_cond(x):
@@ -29,7 +29,10 @@ def get_rank(x):
     x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
     return torch.linalg.matrix_rank(x_f)/x.shape[1]
 
-
+def fix_cov(c):
+    a=0.9+0.1*torch.exp(-(c/0.9)**10)
+    # torch.diagonal(a).fill_(1.0)
+    return a*c
 
 def batch_orthonorm(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
@@ -78,9 +81,9 @@ def batch_orthonorm(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0
 
 
 
-class IterNorm(nn.Module):
-    def __init__(self, num_features, num_groups=1, num_channels=-1, T=5, dim=4, eps=1e-5, momentum=0.1, affine=True, *args, **kwargs):
-        super(IterNorm, self).__init__()
+class IterNormMod(nn.Module):
+    def __init__(self, num_features, num_groups=1, num_channels=-1, T=10, dim=4, eps=1e-5, momentum=0.1, affine=True, *args, **kwargs):
+        super(IterNormMod, self).__init__()
         # assert dim == 4, 'IterNorm is not support 2D'
         self.T = T
         self.eps = eps
@@ -88,6 +91,7 @@ class IterNorm(nn.Module):
         self.num_features = num_features
         self.affine = affine
         self.dim = dim
+        self.fix_cov=kwargs.get('fix_cov',False)
 
         if num_channels == -1:
             num_channels = (num_features - 1) // num_groups + 1
@@ -132,7 +136,8 @@ class IterNorm(nn.Module):
                                                                   self.running_wm,
                                                                   self.T,
                                                                   momentum=self.momentum,
-                                                                  n_channels=self.num_channels)
+                                                                  n_channels=self.num_channels,
+                                                                  apply_fix_cov=self.fix_cov)
 
         # affine
         if self.affine:
@@ -145,12 +150,14 @@ class IterNorm(nn.Module):
                'momentum={momentum}, affine={affine}'.format(**self.__dict__)
 
 
-def iter_norm_batch(X, running_mean=None, running_wm=None, T=5, eps=1e-5, momentum=0.1,n_channels=-1):
+
+
+def iter_norm_batch(X, running_mean=None, running_wm=None, T=10, eps=1e-5, momentum=0.1,n_channels=-1,apply_fix_cov=False):
     # Use is_grad_enabled to determine whether we are in training mode
     if n_channels==-1:
         n_channels=X.size(1)
     g = X.size(1) // n_channels
-    x = X.transpose(0, 1).contiguous().view(g, nc, -1)
+    x = X.transpose(0, 1).contiguous().view(g, n_channels, -1)
     _, d, m = x.size()
     if torch.is_grad_enabled():
         # calculate centered activation by subtracted mini-batch mean
@@ -161,6 +168,9 @@ def iter_norm_batch(X, running_mean=None, running_wm=None, T=5, eps=1e-5, moment
         P[0] = torch.eye(d).to(X).expand(g, d, d)
         # Sigma = torch.baddbmm(eps, P[0], 1. / m, xc, xc.transpose(1, 2))
         Sigma = torch.baddbmm(P[0], xc, xc.transpose(1, 2), beta=eps, alpha=1. / m)  # =torch.cov(xc,correction=0)
+        if apply_fix_cov:
+            Sigma[0]=fix_cov(Sigma[0])
+
         # reciprocal of trace of Sigma: shape [g, 1, 1]
         rTr = (Sigma * P[0]).sum(1, keepdim=True).sum(2, keepdim=True).reciprocal_()
         Sigma_N = Sigma * rTr
@@ -173,10 +183,9 @@ def iter_norm_batch(X, running_mean=None, running_wm=None, T=5, eps=1e-5, moment
         running_mean = (1-momentum)*running_mean + momentum * mean.detach()
         running_wm = (1-momentum)*running_wm + momentum * wm.detach() 
     else:
-        xc = x - running_mean
+        xc = x - running_mean.view(1,n_channels,1)
         wm = running_wm
     xn = wm.matmul(xc)
     X_hat = xn.view(X.size(1), X.size(0), *X.size()[2:]).transpose(0, 1).contiguous()
     return X_hat, running_mean.data, running_wm.data
-
 
