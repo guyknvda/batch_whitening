@@ -67,7 +67,7 @@ class BWCholeskyBlock(nn.Module):
             self.running_mean = self.running_mean.to(X.device)
             self.running_cov = self.running_cov.to(X.device)
         # Save the updated running_mean and moving_var
-        Y, self.running_mean, self.running_cov = batch_orthonorm(
+        Y, self.running_mean, self.running_cov = cholesky_batch(
             X, self.running_mean, self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
@@ -123,8 +123,8 @@ class BWItnBlock(nn.Module):
         return X_hat
 
 
-BatchWhiteningBlock=BWItnBlock
-# BatchWhiteningBlock=BWCholeskyBlock
+# BatchWhiteningBlock=BWItnBlock
+BatchWhiteningBlock=BWCholeskyBlock
 
 
 
