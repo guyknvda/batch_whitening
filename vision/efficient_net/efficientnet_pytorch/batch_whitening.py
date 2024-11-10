@@ -47,7 +47,7 @@ def corr_to_cov(corr_matrix,std):
     return D@corr_matrix@D
 
 def fix_corr(corr):
-    a=0.9+0.1*torch.exp(-(corr/0.9)**10)
+    a=0.9+0.1*torch.exp(-(abs(corr)/0.9)**10)
     a=a.clone()  # so not to lose the gradients in backprop
     torch.diagonal(a).fill_(1.0)
     return a*corr
