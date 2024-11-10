@@ -574,7 +574,8 @@ if __name__ == "__main__":
         config['model']['batch_whitening_epsilon'] = study.best_params['batch_whitening_epsilon']
 
         config['trainer']['max_epochs'] = 50
-        config['trainer']['devices'] = [1]
+        if args.gpu>=0:
+            config['trainer']['devices'] = [args.gpu]
         print(config)
         # run the training
         main(config)
@@ -592,7 +593,8 @@ if __name__ == "__main__":
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
         config['model']['mbconv_type']=1
         config['trainer']['max_epochs'] = 50
-        config['trainer']['devices'] = [args.gpu]
+        if args.gpu>=0:
+            config['trainer']['devices'] = [args.gpu]
         config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
         config['trainer']['accumulate_grad_batches'] = 1
