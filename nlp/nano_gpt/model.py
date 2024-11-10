@@ -19,7 +19,7 @@ import sys
 sys.path.append('../..')
 #from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
 
-def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1, cov_warmup=False):
+def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.1, cov_warmup=False):
     '''
     https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
     X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
@@ -36,7 +36,13 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     # so we simply flatten the last two dims.
     Xtmp = X.permute(2, 0, 1)
     Xtmp = Xtmp.reshape(Xtmp.shape[0], -1)
-    cov = torch.cov(Xtmp, correction=0)
+    I = torch.eye(n_features).to(running_cov.device)
+    cov = torch.cov(Xtmp, correction=0) + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
+
+    '''if not (cov == cov.T).all():
+        print("cov Not symmetric")
+    if not (torch.linalg.eigh(cov)[0] >= 0).all():
+        print("cov Not PSD")'''
 
     # In training mode, the current mean and variance are used.
     # Update the mean and variance using moving average
@@ -45,7 +51,7 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
 
     if torch.is_grad_enabled():
         if cov_warmup:
-            x_var = torch.diag_embed(torch.diag(cov))
+            x_var = torch.diag(torch.diag(cov))
             running_cov = (1.0 - momentum) * x_var + momentum * cov
         else:
             running_cov = (1.0 - momentum) * running_cov + momentum * cov
@@ -57,8 +63,9 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     permuted_org_shape = X_hat.shape
     X_hat = X_hat.reshape(X_hat.shape[0], -1)
 
-    I = torch.eye(n_features).to(running_cov.device)
-    L = torch.linalg.cholesky(running_cov + eps * I)
+    L, _ = torch.linalg.cholesky_ex(running_cov)
+    if torch.isnan(L).any():
+        raise RuntimeError
     Y = torch.linalg.solve_triangular(L, X_hat, upper=False)
     Y = Y.reshape(permuted_org_shape)
     # Permute to the original channel order (move what now is the first channel, C, to be last)
@@ -71,7 +78,7 @@ class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
