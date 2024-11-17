@@ -329,7 +329,7 @@ while True:
         break
 
     if iter_num == eval_interval:
-        model.set_bw_cov_warmup(False)
+        raw_model.set_bw_cov_warmup(False)
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     # and using the GradScaler if data type is float16

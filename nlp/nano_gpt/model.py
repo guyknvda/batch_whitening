@@ -10,44 +10,66 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import math
 import inspect
 from dataclasses import dataclass
+from tkinter import N
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
 import sys
+
+from newton.matrix_inv_sqrt import ComputePower
 sys.path.append('../..')
 #from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
 
-def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.1, cov_warmup=False):
+def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.01, cov_warmup=False):
     '''
     https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
     X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
     '''
     assert len(X.shape) == 3
+    b_newton = False
+
+    # Split the channels to num_groups
+    num_groups = 1
+    group_size = X.shape[2] // num_groups
+    assert X.shape[2] % num_groups == 0
     n_features = X.shape[2]
 
     # Calculate the mean and covariance on the channel dimension (axis=2). Here we
     # need to maintain the shape of X, so that the broadcasting operation can be carried out later,
-    # i.e., shape = (1, 1, n_features)
+    # i.e., shape = (1, 1, n_features_group)
     mean = X.mean(dim=(0, 1))
+    running_mean = mean  # no running mean
 
     # Move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
     # so we simply flatten the last two dims.
     Xtmp = X.permute(2, 0, 1)
     Xtmp = Xtmp.reshape(Xtmp.shape[0], -1)
     I = torch.eye(n_features).to(running_cov.device)
-    cov = torch.cov(Xtmp, correction=0) + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
+    cov_full = torch.cov(Xtmp, correction=0)
+    cov = torch.zeros_like(cov_full).to(cov_full.device)
 
-    '''if not (cov == cov.T).all():
+    # Get the block diagonal cov
+    for i in range(0, cov_full.shape[0], group_size):
+        block = cov_full[i:i+group_size, i:i+group_size]  # Extract block
+        cov[i:i+group_size, i:i+group_size] = block  # Assign the block to the block diagonal matrix
+
+    '''
+    # Sanity
+    if not (cov == cov.T).all():
         print("cov Not symmetric")
     if not (torch.linalg.eigh(cov)[0] >= 0).all():
-        print("cov Not PSD")'''
+        print("cov Not PSD")
+    '''
+
+    # Mitigation for linear dependency between tuples of channels
+    cov = cov * (0.9 + 0.1 * torch.exp(-(cov / 0.9)**10))
+
+    cov = cov + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
 
     # In training mode, the current mean and variance are used.
     # Update the mean and variance using moving average
-
-    running_mean = mean  # no running mean
 
     if torch.is_grad_enabled():
         if cov_warmup:
@@ -56,6 +78,13 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
         else:
             running_cov = (1.0 - momentum) * running_cov + momentum * cov
 
+    if b_newton:
+        S = ComputePower(running_cov.clone(), 2, iter_count=5, ridge_epsilon=1e-10)
+    else:
+        L, _ = torch.linalg.cholesky_ex(running_cov)
+        if torch.isnan(L).any():
+            raise RuntimeError
+
     X_hat = (X - running_mean.view(1, 1, n_features))
     # Move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
     # so we simply flatten the last two dims.
@@ -63,10 +92,10 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     permuted_org_shape = X_hat.shape
     X_hat = X_hat.reshape(X_hat.shape[0], -1)
 
-    L, _ = torch.linalg.cholesky_ex(running_cov)
-    if torch.isnan(L).any():
-        raise RuntimeError
-    Y = torch.linalg.solve_triangular(L, X_hat, upper=False)
+    if b_newton:
+        Y = S @ X_hat
+    else:
+        Y = torch.linalg.solve_triangular(L, X_hat, upper=False)
     Y = Y.reshape(permuted_org_shape)
     # Permute to the original channel order (move what now is the first channel, C, to be last)
     Y = Y.permute(1, 2, 0)
@@ -78,7 +107,7 @@ class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None):
+    def __init__(self, num_features,momentum=0.01,eps=1e-8,pre_bias_block=None,num_bias_features=None):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
@@ -203,6 +232,20 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
 
+class FirstBlock(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -226,7 +269,7 @@ class GPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),  # h = nn.ModuleList([FirstBlock(config)] + [Block(config) for _ in range(config.n_layer - 1)]),
             ln_f = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
