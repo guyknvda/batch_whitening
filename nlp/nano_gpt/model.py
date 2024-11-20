@@ -22,7 +22,7 @@ from newton.matrix_inv_sqrt import ComputePower
 sys.path.append('../..')
 #from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
 
-def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.01, cov_warmup=False):
+def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.1, cov_warmup=False):
     '''
     https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
     X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
@@ -31,7 +31,7 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     b_newton = False
 
     # Split the channels to num_groups
-    num_groups = 1
+    num_groups = 8
     group_size = X.shape[2] // num_groups
     assert X.shape[2] % num_groups == 0
     n_features = X.shape[2]
@@ -47,7 +47,17 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     Xtmp = X.permute(2, 0, 1)
     Xtmp = Xtmp.reshape(Xtmp.shape[0], -1)
     I = torch.eye(n_features).to(running_cov.device)
+    #print(f'Xtmp.shape: {Xtmp.shape}')
+
+    # PyTorch cov
     cov_full = torch.cov(Xtmp, correction=0)
+
+    # Manual cov
+    '''mean = Xtmp.mean(dim=1, keepdim=True)
+    X_centered = Xtmp - mean
+    cov_full = X_centered @ X_centered.T / Xtmp.size(1)'''
+
+
     cov = torch.zeros_like(cov_full).to(cov_full.device)
 
     # Get the block diagonal cov
@@ -55,18 +65,19 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
         block = cov_full[i:i+group_size, i:i+group_size]  # Extract block
         cov[i:i+group_size, i:i+group_size] = block  # Assign the block to the block diagonal matrix
 
-    '''
+    cov = cov + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
+
     # Sanity
     if not (cov == cov.T).all():
         print("cov Not symmetric")
-    if not (torch.linalg.eigh(cov)[0] >= 0).all():
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    if not (eigvals >= 0).all():
         print("cov Not PSD")
-    '''
+        print(f'cov.shape: {cov.shape}, I.shape: {I.shape}')
+        print(f'Five smallest eigenvalues: {eigvals[:5]}')
 
     # Mitigation for linear dependency between tuples of channels
-    cov = cov * (0.9 + 0.1 * torch.exp(-(cov / 0.9)**10))
-
-    cov = cov + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
+    #cov = cov * (0.9 + 0.1 * torch.exp(-(cov / 0.9)**10))
 
     # In training mode, the current mean and variance are used.
     # Update the mean and variance using moving average
@@ -85,9 +96,9 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
         if torch.isnan(L).any():
             raise RuntimeError
 
-    X_hat = (X - running_mean.view(1, 1, n_features))
-    # Move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
+    # Center and move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
     # so we simply flatten the last two dims.
+    X_hat = (X - running_mean.view(1, 1, n_features))
     X_hat = X_hat.permute(2, 0, 1)
     permuted_org_shape = X_hat.shape
     X_hat = X_hat.reshape(X_hat.shape[0], -1)
@@ -107,7 +118,7 @@ class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.01,eps=1e-8,pre_bias_block=None,num_bias_features=None):
+    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
