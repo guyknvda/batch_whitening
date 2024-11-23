@@ -36,8 +36,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
-# HPARAM_OPT='INFER'
-HPARAM_OPT='OFF'
+HPARAM_OPT='INFER'
+# HPARAM_OPT='OFF'
  
 
 ############################################

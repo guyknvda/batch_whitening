@@ -52,13 +52,13 @@ def fix_corr(corr):
     torch.diagonal(a).fill_(1.0)
     return a*corr
 
-
+#=================================Cholesky=================================
 
 def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
     n_features = X.shape[1]
-
+    cov_I = torch.eye(n_features).to(running_cov.device)     
     if len(X.shape) == 2:
         # When using a fully connected layer, calculate the mean and
         # variance on the feature dimension
@@ -75,13 +75,13 @@ def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.
         mean = X.mean(dim=(0, 2, 3))
         Xtmp = X.view(X.shape[0],X.shape[1],-1)
         Xtmp = Xtmp.permute(1,0,2).reshape(X.shape[1],-1)
-        cov = torch.cov(Xtmp,correction=0) 
+        cov = torch.cov(Xtmp,correction=0) + eps*cov_I 
         # var = ((X - mean) ** 2).mean(dim=(0, 2, 3), keepdim=True)
     # In training mode, the current mean and variance are used
     # Update the mean and variance using moving average
     # running_mean = (1.0 - momentum) * running_mean + momentum * mean
     running_mean = mean         # no running mean (alpha = momentum = 1)
-    cov_I = torch.eye(n_features).to(running_cov.device)     
+    
     # during warmup, we're not updating running_cov but using a statistics of current batch 
     if cov_warmup:
         x_var = torch.diag_embed(torch.diag(cov))
@@ -90,7 +90,8 @@ def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.
     elif torch.is_grad_enabled():    
         running_cov = (1.0 - momentum) * running_cov + momentum * cov
     # note that we're using running_cov also during training
-    L = torch.linalg.cholesky(running_cov + eps*cov_I)
+    # L = torch.linalg.cholesky(running_cov + eps*cov_I)
+    L = torch.linalg.cholesky(running_cov)
     if len(X.shape) == 2:
         X_hat = (X-running_mean.view(1,n_features)).T
         Y = torch.linalg.solve_triangular(L,X_hat,upper=False).T
@@ -148,6 +149,45 @@ def cholesky2_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0
         X_hat = X_hat.permute(1,0,2,3).reshape(X.shape[1],-1)
         Y = torch.linalg.solve_triangular(L,X_hat,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
     return Y, running_mean.data, running_cov.data
+
+class BWCholeskyBlock(nn.Module):
+    # num_features: the number of outputs for a fully connected layer or the
+    # number of output channels for a convolutional layer. num_dims: 2 for a
+    # fully connected layer and 4 for a convolutional layer
+    def __init__(self, num_features,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+        super().__init__()
+        # The scale parameter and the shift parameter (model parameters) are
+        # initialized to 1 and 0, respectively 
+        self.n_features=num_features
+        self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
+        self.momentum = momentum
+        self.eps = eps
+        self.cov_warmup=False
+        # self.gamma = nn.Parameter(torch.ones(num_features))
+        # The variables that are not model parameters are initialized to 0 and 1
+        self.register_buffer('running_mean', torch.zeros(num_features))
+        self.register_buffer('running_cov', torch.eye(num_features))
+        self.pre_bias_block=pre_bias_block
+
+        self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
+
+    def forward(self, X):
+        # If X is not on the main memory, copy moving_mean and moving_var to
+        # the device where X is located
+        if self.running_mean.device != X.device:
+            self.running_mean = self.running_mean.to(X.device)
+            self.running_cov = self.running_cov.to(X.device)
+        # Save the updated running_mean and moving_var
+        Y, self.running_mean, self.running_cov = cholesky_batch(
+            X, self.running_mean, self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
+        if self.pre_bias_block is not None:
+            Y=self.pre_bias_block(Y)
+        # add the bias
+        shape = (1,self.n_bias_features) if len(X.shape)==2 else (1,self.n_bias_features,1,1)
+        Y += self.beta.view(shape)
+        return Y
+
+#=============================Iter Norm=====================================
 
 def iter_norm_batch(X, running_mean=None, running_wm=None, T=10, eps=1e-5, momentum=0.1,n_channels=-1,apply_fix_cov=False):
     # Use is_grad_enabled to determine whether we are in training mode
@@ -257,5 +297,54 @@ class IterNormMod(nn.Module):
         return '{num_features}, num_channels={num_channels}, T={T}, eps={eps}, dim={dim}, ' \
                'momentum={momentum}, affine={affine}'.format(**self.__dict__)
 
+class BWItnBlock(nn.Module):
+    # num_features: the number of outputs for a fully connected layer or the
+    # number of output channels for a convolutional layer. num_dims: 2 for a
+    # fully connected layer and 4 for a convolutional layer
+    def __init__(self, num_features,T=10,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+        super().__init__()
+        # The scale parameter and the shift parameter (model parameters) are
+        # initialized to 1 and 0, respectively 
+        self.T=T
+        self.n_features=num_features
+        self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
+        self.momentum = momentum
+        self.eps = eps
 
+        # note: currently assuming no grouping of features so we have only one group
+        num_groups=1
+        self.num_channels = num_features
+        # The variables that are not model parameters are initialized to 0 and 1
+        self.register_buffer('running_mean', torch.zeros(num_groups, self.num_channels, 1))
+        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(num_groups, self.num_channels, self.num_channels))
+        self.pre_bias_block=pre_bias_block
+
+        # self.gamma = nn.Parameter(torch.ones(num_features))
+        self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
+
+    def forward(self, X):
+        # If X is not on the main memory, copy moving_mean and moving_var to
+        # the device where X is located
+        if self.running_mean.device != X.device:
+            self.running_mean = self.running_mean.to(X.device)
+            self.running_cov = self.running_cov.to(X.device)
+        # Save the updated running_mean and moving_var
+        X_hat,self.running_mean,self.running_cov = iter_norm_batch(X,
+                                                                  self.running_mean,
+                                                                  self.running_cov,
+                                                                  self.T,
+                                                                  momentum=self.momentum,
+                                                                  n_channels=self.num_channels)
+        if self.pre_bias_block is not None:
+            X_hat=self.pre_bias_block(X_hat)
+        # add the bias
+        shape = (1,self.n_bias_features) if len(X.shape)==2 else (1,self.n_bias_features,1,1)
+        X_hat += self.beta.view(shape)
+        return X_hat
+
+
+
+#==============================Select Whitening===============================
+# BatchWhiteningBlock=BWItnBlock
+BatchWhiteningBlock=BWCholeskyBlock
 
