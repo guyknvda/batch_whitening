@@ -7,10 +7,12 @@ https://github.com/openai/gpt-2/blob/master/src/model.py
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
 """
 
+import os
 import math
 import inspect
 from dataclasses import dataclass
 from tkinter import N
+import uuid
 
 import torch
 import torch.nn as nn
@@ -18,7 +20,7 @@ from torch.nn import functional as F
 
 import sys
 
-from newton.matrix_inv_sqrt import ComputePower
+from nlp.newton.matrix_inv_sqrt import ComputePower
 sys.path.append('../..')
 #from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
 
@@ -31,7 +33,7 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     b_newton = False
 
     # Split the channels to num_groups
-    num_groups = 8
+    num_groups = 1
     group_size = X.shape[2] // num_groups
     assert X.shape[2] % num_groups == 0
     n_features = X.shape[2]
@@ -75,6 +77,12 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
         print("cov Not PSD")
         print(f'cov.shape: {cov.shape}, I.shape: {I.shape}')
         print(f'Five smallest eigenvalues: {eigvals[:5]}')
+
+        '''tensor_name = f"tensor_{uuid.uuid4().hex}.pt"
+        save_path = os.path.join('./', tensor_name)
+        torch.save(X, save_path)
+        print(f"!!!!!!!!!!!!!!!!!!!!! Tensor saved to: {os.path.abspath(save_path)}")
+        sys.exit("Exiting after saving tensor")'''
 
     # Mitigation for linear dependency between tuples of channels
     #cov = cov * (0.9 + 0.1 * torch.exp(-(cov / 0.9)**10))
