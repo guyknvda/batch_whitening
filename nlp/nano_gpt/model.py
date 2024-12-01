@@ -24,7 +24,9 @@ from nlp.newton.matrix_inv_sqrt import ComputePower
 sys.path.append('../..')
 #from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
 
-def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.1, cov_warmup=False):
+#torch.set_default_dtype(torch.float64)
+
+def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.1, cov_warmup=1):
     '''
     https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
     X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
@@ -33,7 +35,7 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     b_newton = False
 
     # Split the channels to num_groups
-    num_groups = 1
+    num_groups = 8
     group_size = X.shape[2] // num_groups
     assert X.shape[2] % num_groups == 0
     n_features = X.shape[2]
@@ -69,40 +71,20 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
 
     cov = cov + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
 
-    # Sanity
-    if not (cov == cov.T).all():
-        print("cov Not symmetric")
-    eigvals, eigvecs = torch.linalg.eigh(cov)
-    if not (eigvals >= 0).all():
-        print("cov Not PSD")
-        print(f'cov.shape: {cov.shape}, I.shape: {I.shape}')
-        print(f'Five smallest eigenvalues: {eigvals[:5]}')
-
-        '''tensor_name = f"tensor_{uuid.uuid4().hex}.pt"
-        save_path = os.path.join('./', tensor_name)
-        torch.save(X, save_path)
-        print(f"!!!!!!!!!!!!!!!!!!!!! Tensor saved to: {os.path.abspath(save_path)}")
-        sys.exit("Exiting after saving tensor")'''
-
-    # Mitigation for linear dependency between tuples of channels
-    #cov = cov * (0.9 + 0.1 * torch.exp(-(cov / 0.9)**10))
-
-    # In training mode, the current mean and variance are used.
-    # Update the mean and variance using moving average
-
-    if torch.is_grad_enabled():
-        if cov_warmup:
-            x_var = torch.diag(torch.diag(cov))
-            running_cov = (1.0 - momentum) * x_var + momentum * cov
+    try:
+        if b_newton:
+            S = ComputePower(cov.clone(), 2, iter_count=5, ridge_epsilon=1e-10)
         else:
-            running_cov = (1.0 - momentum) * running_cov + momentum * cov
-
-    if b_newton:
-        S = ComputePower(running_cov.clone(), 2, iter_count=5, ridge_epsilon=1e-10)
-    else:
-        L, _ = torch.linalg.cholesky_ex(running_cov)
-        if torch.isnan(L).any():
-            raise RuntimeError
+            L, _ = torch.linalg.cholesky_ex(cov)
+            if torch.isnan(L).any():
+                raise RuntimeError
+    except Exception as e:
+        eigvals, eigvecs = torch.linalg.eigh(cov)
+        if not (eigvals >= 0).all():
+            print("B: cov Not PSD")
+            print(f'cov.shape: {cov.shape}, I.shape: {I.shape}')
+            print(f'Five smallest eigenvalues: {eigvals[:5]}')
+        raise e
 
     # Center and move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
     # so we simply flatten the last two dims.
@@ -134,7 +116,7 @@ class BatchWhiteningBlock(nn.Module):
         self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
         self.momentum = momentum
         self.eps = eps
-        self.cov_warmup=False
+        self.cov_warmup=3
         self.gamma = nn.Parameter(torch.ones(num_features))
         # The variables that are not model parameters are initialized to 0 and 1
         self.register_buffer('running_mean', torch.zeros(num_features))
@@ -310,8 +292,8 @@ class GPT(nn.Module):
 
         # create a list of all BW layers in the model
         self.bw_layers = self._get_bw_layers()
-        self.curr_cov_warmup=False
-        self.set_bw_cov_warmup(True)
+        self.curr_cov_warmup=3
+        self.set_bw_cov_warmup(1)
 
     def _get_bw_layers(self):
         bw_layers = []
