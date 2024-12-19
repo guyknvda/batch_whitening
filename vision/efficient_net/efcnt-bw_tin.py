@@ -36,8 +36,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
-HPARAM_OPT='INFER'
-# HPARAM_OPT='OFF'
+# HPARAM_OPT='INFER'
+HPARAM_OPT='OFF'
  
 
 ############################################
@@ -556,7 +556,7 @@ if __name__ == "__main__":
         print(f'best params: {study.best_params}')
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
-        config['wandb']['name'] = 'nbw2_exp_b0_best'
+        config['wandb']['name'] = 'nbw2_exp_b0_best_mbconv'
 
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
@@ -568,6 +568,7 @@ if __name__ == "__main__":
         config['lr_scheduler']['gamma'] = study.best_params['lr_sched_gamma']
 
         config['model']['conv_stem_type'] = study.best_params['conv_stem_type']
+        # config['model']['conv_stem_type'] = 1       # temp experiment to disable bw on all layers except for MBConv blocks
         config['model']['mbconv_type'] = study.best_params['mbconv_type']
 
         config['model']['batch_whitening_momentum'] = study.best_params['batch_whitening_momentum']
@@ -592,6 +593,7 @@ if __name__ == "__main__":
         config['optimizer']['lr'] = 0.001
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
         config['model']['mbconv_type']=1
+        # config['model']['conv_stem_type']=1
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:
             config['trainer']['devices'] = [args.gpu]

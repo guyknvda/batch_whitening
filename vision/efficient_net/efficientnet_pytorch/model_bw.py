@@ -246,13 +246,8 @@ class EfficientNetBW(nn.Module):
         in_channels = 3  # rgb
         out_channels = round_filters(32, self._global_params)  # number of output channels
         
-        if self._global_params.mbconv_type==0:       # mbconv_type=0 means without BW. run the original model as is
+        if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1:       # mbconv_type=0 means without BW. run the original model as is
             self._conv_stem_block = nn.Sequential(
-                Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False),
-                nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
-            )
-        elif self._global_params.conv_stem_type==1:
-            self._conv_stem_block=nn.Sequential(
                 Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False),
                 nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
             )
@@ -290,7 +285,7 @@ class EfficientNetBW(nn.Module):
         out_channels = round_filters(1280, self._global_params)
         Conv2d = get_same_padding_conv2d(image_size=image_size)
         pre_bias_block = Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        if self._global_params.mbconv_type==0:       # mbconv_type=0 means without BW. run the original model as is
+        if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1:       # mbconv_type=0 means without BW. run the original model as is
             self._conv_head_block=nn.Sequential(
                 Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
                 nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)

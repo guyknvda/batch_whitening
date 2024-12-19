@@ -52,6 +52,15 @@ def fix_corr(corr):
     torch.diagonal(a).fill_(1.0)
     return a*corr
 
+
+def fix_cov(covmat):
+    a=torch.ones_like(covmat)*0.9
+    a.fill_diagonal_(1.0)
+    # a=a.clone()  # so not to lose the gradients in backprop
+    # torch.diagonal(a).fill_(1.0)
+    return a*covmat
+
+
 #=================================Cholesky=================================
 
 def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
@@ -206,10 +215,11 @@ def iter_norm_batch(X, running_mean=None, running_wm=None, T=10, eps=1e-5, momen
         # Sigma = torch.baddbmm(eps, P[0], 1. / m, xc, xc.transpose(1, 2))
         Sigma = torch.baddbmm(P[0], xc, xc.transpose(1, 2), beta=eps, alpha=1. / m)  # =torch.cov(xc,correction=0)
         if apply_fix_cov:
-            corr=cov_to_corr(Sigma[0])
-            xc_std=xc[0].std(axis=-1)
-            corr=fix_corr(corr)
-            Sigma[0]=corr_to_cov(corr,xc_std)
+            # corr=cov_to_corr(Sigma[0])
+            # xc_std=xc[0].std(axis=-1)
+            # corr=fix_corr(corr)
+            # Sigma[0]=corr_to_cov(corr,xc_std)
+            Sigma[0]=fix_cov(Sigma[0])
 
         # reciprocal of trace of Sigma: shape [g, 1, 1]
         rTr = (Sigma * P[0]).sum(1, keepdim=True).sum(2, keepdim=True).reciprocal_()
@@ -334,7 +344,8 @@ class BWItnBlock(nn.Module):
                                                                   self.running_cov,
                                                                   self.T,
                                                                   momentum=self.momentum,
-                                                                  n_channels=self.num_channels)
+                                                                  n_channels=self.num_channels,
+                                                                  apply_fix_cov=True)
         if self.pre_bias_block is not None:
             X_hat=self.pre_bias_block(X_hat)
         # add the bias
@@ -345,6 +356,6 @@ class BWItnBlock(nn.Module):
 
 
 #==============================Select Whitening===============================
-# BatchWhiteningBlock=BWItnBlock
-BatchWhiteningBlock=BWCholeskyBlock
+BatchWhiteningBlock=BWItnBlock
+# BatchWhiteningBlock=BWCholeskyBlock
 
