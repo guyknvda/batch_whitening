@@ -36,8 +36,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
-# HPARAM_OPT='INFER'
-HPARAM_OPT='OFF'
+HPARAM_OPT='INFER'
+# HPARAM_OPT='OFF'
  
 
 ############################################
@@ -556,7 +556,7 @@ if __name__ == "__main__":
         print(f'best params: {study.best_params}')
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
-        config['wandb']['name'] = 'nbw2_exp_b0_best_mbconv'
+        config['wandb']['name'] = 'nbw2_exp_b0_best'
 
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
@@ -577,6 +577,7 @@ if __name__ == "__main__":
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:
             config['trainer']['devices'] = [args.gpu]
+        config['trainer']['accumulate_grad_batches'] = 1
         print(config)
         # run the training
         main(config)

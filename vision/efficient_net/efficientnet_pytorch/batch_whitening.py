@@ -61,8 +61,22 @@ def fix_cov(covmat):
     return a*covmat
 
 
+def get_grp_ch(num_features,num_groups=1,num_channels=-1):
+    if num_channels == -1:
+        num_channels = (num_features - 1) // num_groups + 1
+    num_groups = num_features // num_channels
+    while num_features % num_channels != 0:
+        # num_channels //= 2
+        num_channels -= 1
+        num_groups = num_features // num_channels
+    assert num_groups > 0 and num_features % num_groups == 0, "num features={}, num groups={}".format(num_features,
+        num_groups)
+    return num_groups,num_channels
+
+
 #=================================Cholesky=================================
 
+#---------diagonal-------------
 def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
@@ -159,7 +173,7 @@ def cholesky2_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0
         Y = torch.linalg.solve_triangular(L,X_hat,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
     return Y, running_mean.data, running_cov.data
 
-class BWCholeskyBlock(nn.Module):
+class BWCholeskyBlock_diag(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
@@ -189,6 +203,82 @@ class BWCholeskyBlock(nn.Module):
         # Save the updated running_mean and moving_var
         Y, self.running_mean, self.running_cov = cholesky_batch(
             X, self.running_mean, self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
+        if self.pre_bias_block is not None:
+            Y=self.pre_bias_block(Y)
+        # add the bias
+        shape = (1,self.n_bias_features) if len(X.shape)==2 else (1,self.n_bias_features,1,1)
+        Y += self.beta.view(shape)
+        return Y
+
+#---------block diagonal-------------
+def block_cholesky_batch(X, running_mean=None, running_cov=None, n_channels=-1, eps=1e-5, momentum=0.1,cov_warmup=False):
+    # Use is_grad_enabled to determine whether we are in training mode
+    assert len(X.shape) in (2, 4)
+    n_features = X.shape[1]
+    if n_channels==-1:
+        n_channels=n_features
+    n_groups=n_features//n_channels
+    x = X.transpose(0, 1).contiguous().view(n_groups, n_channels, -1)    
+    cov_I = torch.eye(n_channels).expand(n_groups, n_channels, n_channels).to(running_cov.device)     
+    _, d, m = x.size()
+    mean = x.mean(-1, keepdim=True)
+    xc = x - mean
+    cov = torch.baddbmm(cov_I, xc, xc.transpose(1, 2), beta=eps, alpha=1. / m)
+
+    # In training mode, the current mean and variance are used
+    # Update the mean and variance using moving average
+    # running_mean = (1.0 - momentum) * running_mean + momentum * mean
+    running_mean = mean         # no running mean (alpha = momentum = 1)
+    
+    # during warmup, we're not updating running_cov but using a statistics of current batch 
+    if cov_warmup:
+        # x_var = torch.diag_embed(torch.diag(cov))
+        x_var = torch.eye(d).unsqueeze(0).to(cov)*cov
+        running_cov = (1.0 - momentum) * x_var + momentum * cov
+    # when warm up is done, running_cov is updated only during training
+    elif torch.is_grad_enabled():    
+        running_cov = (1.0 - momentum) * running_cov + momentum * cov
+    # note that we're using running_cov also during training
+    # L = torch.linalg.cholesky(running_cov + eps*cov_I)
+    L = torch.linalg.cholesky(running_cov)
+    if len(X.shape) == 2:
+        Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0]).permute(1,0)
+    else:
+        Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
+    return Y, running_mean.data, running_cov.data
+
+
+class BWCholeskyBlock(nn.Module):
+    # num_features: the number of outputs for a fully connected layer or the
+    # number of output channels for a convolutional layer. num_dims: 2 for a
+    # fully connected layer and 4 for a convolutional layer
+    def __init__(self, num_features,num_groups=1, num_channels=4,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+        super().__init__()
+        # The scale parameter and the shift parameter (model parameters) are
+        # initialized to 1 and 0, respectively 
+        self.n_features=num_features
+        self.num_groups,self.num_channels=get_grp_ch(num_features,num_groups,num_channels)
+        self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
+        self.momentum = momentum
+        self.eps = eps
+        self.cov_warmup=False
+        # self.gamma = nn.Parameter(torch.ones(num_features))
+        # The variables that are not model parameters are initialized to 0 and 1
+        self.register_buffer('running_mean', torch.zeros(self.num_groups, self.num_channels, 1))
+        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(self.num_groups, self.num_channels, self.num_channels))
+        self.pre_bias_block=pre_bias_block
+
+        self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
+
+    def forward(self, X):
+        # If X is not on the main memory, copy moving_mean and moving_var to
+        # the device where X is located
+        if self.running_mean.device != X.device:
+            self.running_mean = self.running_mean.to(X.device)
+            self.running_cov = self.running_cov.to(X.device)
+        # Save the updated running_mean and moving_var
+        Y, self.running_mean, self.running_cov = block_cholesky_batch(
+            X, self.running_mean, self.running_cov, self.num_channels,eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
         # add the bias
@@ -356,6 +446,6 @@ class BWItnBlock(nn.Module):
 
 
 #==============================Select Whitening===============================
-BatchWhiteningBlock=BWItnBlock
-# BatchWhiteningBlock=BWCholeskyBlock
+# BatchWhiteningBlock=BWItnBlock
+BatchWhiteningBlock=BWCholeskyBlock
 
