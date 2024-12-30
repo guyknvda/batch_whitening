@@ -8,8 +8,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from bert.dataset import IMDBBertDataset
-from bert.model import BERT
+from dataset import IMDBBertDataset
+from model import BERT
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

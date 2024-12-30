@@ -3,8 +3,11 @@ import torch
 from torch import nn
 import torch.nn.functional as f
 
+from nlp.nano_gpt.model import BatchWhiteningBlock
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+batch_whitening = True
 
 
 class JointEmbedding(nn.Module):
@@ -17,7 +20,9 @@ class JointEmbedding(nn.Module):
         self.token_emb = nn.Embedding(vocab_size, size)
         self.segment_emb = nn.Embedding(vocab_size, size)
 
-        self.norm = nn.LayerNorm(size)
+        #self.norm = nn.LayerNorm(size)
+        self.norm = BatchWhiteningBlock(size) if batch_whitening else nn.LayerNorm(size)
+
 
     def forward(self, input_tensor):
         sentence_size = input_tensor.size(-1)
@@ -83,7 +88,8 @@ class MultiHeadAttention(nn.Module):
             AttentionHead(dim_inp, dim_out) for _ in range(num_heads)
         ])
         self.linear = nn.Linear(dim_out * num_heads, dim_inp)
-        self.norm = nn.LayerNorm(dim_inp)
+        #self.norm = nn.LayerNorm(dim_inp)
+        self.norm = BatchWhiteningBlock(dim_inp) if batch_whitening else nn.LayerNorm(dim_inp)
 
     def forward(self, input_tensor: torch.Tensor, attention_mask: torch.Tensor):
         s = [head(input_tensor, attention_mask) for head in self.heads]
@@ -105,7 +111,8 @@ class Encoder(nn.Module):
             nn.Linear(dim_out, dim_inp),
             nn.Dropout(dropout)
         )
-        self.norm = nn.LayerNorm(dim_inp)
+        #self.norm = nn.LayerNorm(dim_inp)
+        self.norm = BatchWhiteningBlock(dim_inp) if batch_whitening else nn.LayerNorm(dim_inp)
 
     def forward(self, input_tensor: torch.Tensor, attention_mask: torch.Tensor):
         context = self.attention(input_tensor, attention_mask)

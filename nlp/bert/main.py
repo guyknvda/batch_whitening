@@ -4,15 +4,15 @@ import torch
 
 from pathlib import Path
 
-from bert.dataset import IMDBBertDataset
-from bert.model import BERT
-from bert.trainer import BertTrainer
+from dataset import IMDBBertDataset
+from model import BERT
+from trainer import BertTrainer
 
 BASE_DIR = Path(__file__).resolve().parent
 
 EMB_SIZE = 64
 HIDDEN_SIZE = 36
-EPOCHS = 4
+EPOCHS = 30
 BATCH_SIZE = 12
 NUM_HEADS = 4
 
