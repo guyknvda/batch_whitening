@@ -31,11 +31,12 @@ def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-
     https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
     X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
     '''
+
     assert len(X.shape) == 3
     b_newton = False
 
     # Split the channels to num_groups
-    num_groups = 8
+    num_groups = 32
     group_size = X.shape[2] // num_groups
     assert X.shape[2] % num_groups == 0
     n_features = X.shape[2]
