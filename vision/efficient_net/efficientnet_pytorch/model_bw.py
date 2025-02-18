@@ -103,7 +103,7 @@ class MBConvBlockBW(nn.Module):
             if block_type==0:
                 self._expand_conv = nn.Sequential(
                     Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False),
-                    nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
+                    BatchNorm(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
                 )
             else:
                 pre_bias_block = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
@@ -115,13 +115,13 @@ class MBConvBlockBW(nn.Module):
         Conv2d = get_same_padding_conv2d(image_size=image_size)
         if block_type==1:
             self._depthwise_block=nn.Sequential(
-                nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps),
+                BatchNorm(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps),
                 Conv2d(in_channels=oup, out_channels=oup, groups=oup,kernel_size=k, stride=s, bias=False)  # depthwise conv
             )
         elif block_type==2 or block_type==0:
             self._depthwise_block=nn.Sequential(
                 Conv2d(in_channels=oup, out_channels=oup, groups=oup,kernel_size=k, stride=s, bias=False),  # depthwise conv
-                nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps),
+                BatchNorm(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps),
             )
         elif block_type==3:
             self._depthwise_block=Conv2d(in_channels=oup, out_channels=oup, groups=oup,kernel_size=k, stride=s, bias=False)  # depthwise conv
@@ -148,7 +148,7 @@ class MBConvBlockBW(nn.Module):
         if block_type==0:
             self._proj_block = nn.Sequential(
                 pre_bias_block,
-                nn.BatchNorm2d(num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps)
+                BatchNorm(num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps)
             )
         else:
             self._proj_block = BatchWhiteningBlock(num_features=oup, momentum=self._bw_mom, eps=self._bw_eps,pre_bias_block=pre_bias_block,num_bias_features=final_oup)
@@ -249,7 +249,7 @@ class EfficientNetBW(nn.Module):
         if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1:       # mbconv_type=0 means without BW. run the original model as is
             self._conv_stem_block = nn.Sequential(
                 Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False),
-                nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
+                BatchNorm(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
             )
         elif self._global_params.conv_stem_type==2:
             pre_bias_block = Conv2d(in_channels,out_channels,kernel_size=1,stride=2)
@@ -288,7 +288,7 @@ class EfficientNetBW(nn.Module):
         if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1:       # mbconv_type=0 means without BW. run the original model as is
             self._conv_head_block=nn.Sequential(
                 Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
+                BatchNorm(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
             )
         else:
             self._conv_head_block=BatchWhiteningBlock(num_features=in_channels, momentum=bw_mom, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)

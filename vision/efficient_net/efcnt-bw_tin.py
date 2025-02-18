@@ -33,6 +33,7 @@ import optuna
 DATA_DIR = '/datasets/vision/tiny-imagenet-200' # Original images come in shapes of [3,64,64]
 # Define training and validation data paths
 TRAIN_DIR = os.path.join(DATA_DIR, 'train') 
+# VALID_DIR = os.path.join(DATA_DIR, 'val')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
 # HPARAM_OPT='TRAIN'
@@ -457,7 +458,7 @@ config_defaults = {'global_seed':42,
                 'wandb':{'mode':'online',
                             'project':'bw-efcnt_tin',
                             'name':'bw_exp_b0',},
-                    'dataset':{ 'data_dir':'/datasets/vision/tiny-imagenet-200',
+                    'dataset':{ 'data_dir':DATA_DIR,
                                 'batch_size':64,
                                 'image_size':224,
                                 'recompute_stats':False,
@@ -556,7 +557,8 @@ if __name__ == "__main__":
         print(f'best params: {study.best_params}')
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
-        config['wandb']['name'] = 'nbw2_exp_b0_best'
+        # config['wandb']['name'] = 'nbw2_exp_b0_best_modified'
+        config['wandb']['name'] = 'nbw2_exp_b0_bw_blkdiag_best'
 
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
@@ -570,6 +572,7 @@ if __name__ == "__main__":
         config['model']['conv_stem_type'] = study.best_params['conv_stem_type']
         # config['model']['conv_stem_type'] = 1       # temp experiment to disable bw on all layers except for MBConv blocks
         config['model']['mbconv_type'] = study.best_params['mbconv_type']
+        # config['model']['mbconv_type']=0        # for debug - disable batch whitening. use bn .
 
         config['model']['batch_whitening_momentum'] = study.best_params['batch_whitening_momentum']
         config['model']['batch_whitening_epsilon'] = study.best_params['batch_whitening_epsilon']
@@ -577,7 +580,7 @@ if __name__ == "__main__":
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:
             config['trainer']['devices'] = [args.gpu]
-        config['trainer']['accumulate_grad_batches'] = 1
+        config['trainer']['accumulate_grad_batches'] = 4
         print(config)
         # run the training
         main(config)
@@ -587,21 +590,21 @@ if __name__ == "__main__":
         # Run the main function
         # delete 'wandb' from config    
         config = copy.deepcopy(config_defaults)
-        config.pop('wandb') 
-        # config['model']['name'] = 'efficientnet-b3'
+        # config.pop('wandb') 
+        config['model']['name'] = 'efficientnet-b3'
         # config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
         config['optimizer']['opt_name'] = 'AdamW'
         config['optimizer']['lr'] = 0.001
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
-        config['model']['mbconv_type']=1
+        config['model']['mbconv_type']=0      # 0 to turn batch whitening off
         # config['model']['conv_stem_type']=1
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:
             config['trainer']['devices'] = [args.gpu]
         config['dataset']['batch_size'] = 32
         # config['trainer']['precision'] = 16
-        config['trainer']['accumulate_grad_batches'] = 1
-        # config['wandb']['name'] = f"nbw2_exp_b0_off_bs{config['dataset']['batch_size']}"
+        config['trainer']['accumulate_grad_batches'] = 4
+        # config['wandb']['name'] = f"nbw2_exp_b0_Itn_fix_off"
         print(config)
         main(config)
 
