@@ -76,6 +76,8 @@ See the learning curves in Figure 1 and Figure 2:
 **Figure 2: Validation Loss**  
 <img src="docs/roberta_eval_loss.png" alt="Validation Loss" width="50%">
 
+<img src="docs/legend.png" alt="Training Loss" width="30%">
+
 
 ## Next Steps  
 - Replace hardcoded values with configurable parameters, allowing them to be set via command-line arguments when running the training script.  
