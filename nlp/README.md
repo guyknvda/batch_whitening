@@ -82,3 +82,9 @@ See the learning curves in Figure 1 and Figure 2:
 ## Next Steps  
 - Replace hardcoded values with configurable parameters, allowing them to be set via command-line arguments when running the training script.  
 - TBD
+
+
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
