@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 from torchvision.utils import make_grid
 from torchvision import models, datasets
 from torchvision import transforms as T
+# from torchsummary import summary
 
 import os
 import argparse
@@ -185,13 +186,32 @@ class TinyImageNetDataModule(L.LightningModule):
     
 ############################################
 # creating the model and LigningModule
+def compute_layer_dimensions(input_size, stride):
+    """Compute output spatial dimensions after a layer with given stride"""
+    return (input_size + 1) // stride  # +1 to account for potential padding
+
+
 def create_efficientnet_model(model_name, model_hparams, load_pretrained=False):
+    # Extract parameters needed for dimension calculation
+    # batch_size = model_hparams.pop('batch_size', 64)  # Default to 64 if not provided
+    # image_size = model_hparams.pop('image_size', 224)  # Default to 224 if not provided
+    
+    # # Create a dict to store expected dimensions at each layer
+    # dims = {'input': (batch_size, 3, image_size, image_size)}
+    
+    # # Initial stem conv layer dimensions
+    # stem_stride = 2  # EfficientNet's stem uses stride 2
+    # stem_h = compute_layer_dimensions(image_size, stem_stride)
+    # dims['stem'] = (batch_size, 32, stem_h, stem_h)  # 32 is standard EfficientNet stem output channels
+    
+    # Create model with appropriate normalization layers based on dimensions
     if load_pretrained:
         print(f"Loading pretrained model {model_name} from torch hub")
         model = EfficientNetBW.from_pretrained(model_name, **model_hparams)
     else:
         model = EfficientNetBW.from_name(model_name, **model_hparams)
     return model
+
 
 class TinyImageNetModule(L.LightningModule):
     def __init__(self, model_name, model_hparams, optimizer_name, optimizer_hparams,lr_scheduler_name, lr_scheduler_hparams,data_hparams):
@@ -209,12 +229,18 @@ class TinyImageNetModule(L.LightningModule):
         self.optimizer_name = optimizer_name
         self.lr_scheduler_name = lr_scheduler_name        
         self.load_pretrained = model_hparams.pop('load_pretrained', False)
+        
+        # Add batch_size and image_size to model_hparams from data_hparams
+        model_hparams['batch_size'] = data_hparams['batch_size']
+        # model_hparams['image_size'] = data_hparams['image_size']      # not sure if we should enforce the image size here or scale the data according to the model 
+        
         # Create model
-        self.model = create_efficientnet_model(self.model_name,model_hparams,self.load_pretrained)
+        self.model = create_efficientnet_model(self.model_name, model_hparams, self.load_pretrained)
+        
         # Create loss module
         self.loss_module = nn.CrossEntropyLoss()
         # Example input for visualizing the graph in Tensorboard
-        self.example_input_array = torch.zeros((1, 3, 224, 224), dtype=torch.float32)
+        self.example_input_array = torch.zeros((1, 3, data_hparams['image_size'], data_hparams['image_size']), dtype=torch.float32)
 
     def forward(self, imgs):
         # Forward function that is run when visualizing the graph
@@ -424,6 +450,47 @@ def create_data_module(config):
     return dataset_module
 
         
+def analyze_model_dimensions(model, input_size=(1, 3, 224, 224)):
+    """Analyze and print the dimensions of each layer in the model.
+    
+    Args:
+        model: The PyTorch model to analyze
+        input_size: The input tensor size (batch_size, channels, height, width)
+    """
+    print("\nModel Layer Dimensions Analysis:")
+    print("=" * 80)
+    print(f"Input tensor shape: {input_size}")
+    print("-" * 80)
+    
+    # Create a dummy input tensor
+    x = torch.randn(input_size)
+    
+    # Register hooks to capture output shapes
+    def hook_fn(module, input, output):
+        if isinstance(output, tuple):
+            output = output[0]  # Handle cases where output is a tuple
+        print(f"{module.__class__.__name__:30} Output shape: {output.shape}")
+    
+    # Register hooks for all modules
+    hooks = []
+    for name, module in model.named_modules():
+        if len(name) > 0:  # Skip the model itself
+            hook = module.register_forward_hook(hook_fn)
+            hooks.append(hook)
+    
+    # Forward pass with dummy input
+    try:
+        model(x)
+    except Exception as e:
+        print(f"Error during forward pass: {e}")
+    finally:
+        # Remove all hooks
+        for hook in hooks:
+            hook.remove()
+    
+    print("=" * 80)
+
+
 def main(config):
     L.seed_everything(config['global_seed'])
     # if config['wandb']['mode'] == 'online':
@@ -439,6 +506,20 @@ def main(config):
         
 
     model = create_model(config)
+    
+    # Print model summary using torchsummary
+    # print("\nModel Summary:")
+    # print("=" * 80)
+    # summary(model.model, input_size=(config['dataset']['batch_size'], 3, config['dataset']['image_size'], config['dataset']['image_size']))
+    # print("=" * 80)
+    
+    # Analyze and print model dimensions
+    # batch_size = config['dataset']['batch_size']
+    # image_size = config['dataset']['image_size']
+    # input_size = (batch_size, 3, image_size, image_size)
+    # analyze_model_dimensions(model.model, input_size)  # Note: we use model.model because TinyImageNetModule wraps the actual model
+    
+    # model = torch.compile(model)
 
     trainer.fit(model, datamodule=data_set)
     model = TinyImageNetModule.load_from_checkpoint(
@@ -513,6 +594,8 @@ def objective(trial):
         
 
     model = create_model(config)
+    # print the summary of the model
+    print(model)
 
     trainer.fit(model, datamodule=data_set)
 
@@ -558,7 +641,7 @@ if __name__ == "__main__":
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
         # config['wandb']['name'] = 'nbw2_exp_b0_best_modified'
-        config['wandb']['name'] = 'nbw2_exp_b0_bw_blkdiag_best'
+        config['wandb']['name'] = 'nbw2_exp_b0_dbw_blkdiag_best'
 
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
@@ -590,14 +673,17 @@ if __name__ == "__main__":
         # Run the main function
         # delete 'wandb' from config    
         config = copy.deepcopy(config_defaults)
-        # config.pop('wandb') 
-        config['model']['name'] = 'efficientnet-b3'
+        config.pop('wandb') 
+        # config['model']['name'] = 'efficientnet-b3'
         # config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
         config['optimizer']['opt_name'] = 'AdamW'
         config['optimizer']['lr'] = 0.001
         # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
-        config['model']['mbconv_type']=0      # 0 to turn batch whitening off
+        # config['model']['mbconv_type']=0      # 0 to turn batch whitening off
         # config['model']['conv_stem_type']=1
+        config['model']['mbconv_type']=2      
+        config['model']['conv_stem_type']=1
+
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:
             config['trainer']['devices'] = [args.gpu]

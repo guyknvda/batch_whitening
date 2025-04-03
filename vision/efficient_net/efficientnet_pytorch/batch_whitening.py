@@ -1,7 +1,9 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from functools import partial
 
+BW_BLK_SIZE=8   # -1 for full diag, >1 for block diag
 
 
 #================================== Batch Norm =========================================
@@ -122,7 +124,7 @@ def fix_cov(covmat):
     # torch.diagonal(a).fill_(1.0)
     return a*covmat
 
-
+# num_channels is the number of channels in each group (bw block size)
 def get_grp_ch(num_features,num_groups=1,num_channels=-1):
     if num_channels == -1:
         num_channels = (num_features - 1) // num_groups + 1
@@ -138,57 +140,8 @@ def get_grp_ch(num_features,num_groups=1,num_channels=-1):
 
 #=================================Cholesky=================================
 
-#---------diagonal-------------
-def cholesky_batch_bkup(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
-    # Use is_grad_enabled to determine whether we are in training mode
-    assert len(X.shape) in (2, 4)
-    n_features = X.shape[1]
-    cov_I = torch.eye(n_features).to(running_cov.device)     
-    if len(X.shape) == 2:
-        # When using a fully connected layer, calculate the mean and
-        # variance on the feature dimension
-        # shape = (1, n_features)
-        mean = X.mean(dim=0)
-        cov = torch.cov(X.T,correction=0)        
-        # var = ((X - mean) ** 2).mean(dim=0)
-    else:
-        # When using a two-dimensional convolutional layer, calculate the
-        # mean and covariance on the channel dimension (axis=1). Here we
-        # need to maintain the shape of X, so that the broadcasting
-        # operation can be carried out later
-        # shape = (1, n_features, 1, 1)
-        mean = X.mean(dim=(0, 2, 3))
-        Xtmp = X.view(X.shape[0],X.shape[1],-1)
-        Xtmp = Xtmp.permute(1,0,2).reshape(X.shape[1],-1)
-        cov = torch.cov(Xtmp,correction=0) + eps*cov_I 
-        # var = ((X - mean) ** 2).mean(dim=(0, 2, 3), keepdim=True)
-    # In training mode, the current mean and variance are used
-    # Update the mean and variance using moving average
-    # running_mean = (1.0 - momentum) * running_mean + momentum * mean
-    with torch.no_grad():
-        # running_mean.copy_(mean)         # no running mean (alpha = momentum = 1)
-        
-        # during warmup, we're not updating running_cov but using a statistics of current batch 
-        if cov_warmup:
-            x_var = torch.diag_embed(torch.diag(cov))
-            running_cov.copy_((1.0 - momentum) * x_var + momentum * cov)
-        # when warm up is done, running_cov is updated only during training
-        elif torch.is_grad_enabled():    
-            running_mean.copy_((1.0 - momentum) * running_mean + momentum * mean)
-            running_cov.copy_((1.0 - momentum) * running_cov + momentum * cov)
-    # note that we're using running_cov also during training
-    # L = torch.linalg.cholesky(running_cov + eps*cov_I)
-    L = torch.linalg.cholesky(running_cov)
-    if len(X.shape) == 2:
-        X_hat = (X-running_mean.view(1,n_features)).T
-        Y = torch.linalg.solve_triangular(L,X_hat,upper=False).T
-    else:
-        X_hat = X-running_mean.view(1,n_features,1,1)
-        X_hat = X_hat.permute(1,0,2,3).reshape(X.shape[1],-1)
-        Y = torch.linalg.solve_triangular(L,X_hat,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
-    return Y, running_mean.detach(), running_cov.detach()
-
-def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
+#---------full diagonal-------------
+def cholesky_batch_full_diag(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
     n_features = X.shape[1]
@@ -217,102 +170,19 @@ def cholesky_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.
 
     # Compute the Cholesky factor from the running covariance.
     L = torch.linalg.cholesky(running_cov)
-
+    
     if len(X.shape) == 2:
         X_hat = (X - norm_mean.view(1, n_features)).T
         Y = torch.linalg.solve_triangular(L, X_hat, upper=False).T
     else:
         X_hat = X - norm_mean.view(1, n_features, 1, 1)
         X_hat = X_hat.permute(1, 0, 2, 3).reshape(n_features, -1)
+        Y = X
         Y = torch.linalg.solve_triangular(L, X_hat, upper=False)
         Y = Y.reshape(n_features, X.shape[0], X.shape[2], X.shape[3]).permute(1, 0, 2, 3)
     return Y, running_mean.detach(), running_cov.detach()
 
-def cholesky2_batch(X, running_mean=None, running_cov=None, eps=1e-5, momentum=0.1,cov_warmup=False):
-    # Use is_grad_enabled to determine whether we are in training mode
-    assert len(X.shape) in (2, 4)
-    n_features = X.shape[1]
-
-    if len(X.shape) == 2:
-        # When using a fully connected layer, calculate the mean and
-        # variance on the feature dimension
-        # shape = (1, n_features)
-        mean = X.mean(dim=0)
-        cov = torch.cov(X.T,correction=0)        
-        # var = ((X - mean) ** 2).mean(dim=0)
-    else:
-        # When using a two-dimensional convolutional layer, calculate the
-        # mean and covariance on the channel dimension (axis=1). Here we
-        # need to maintain the shape of X, so that the broadcasting
-        # operation can be carried out later
-        # shape = (1, n_features, 1, 1)
-        mean = X.mean(dim=(0, 2, 3))
-        Xtmp = X.view(X.shape[0],X.shape[1],-1)
-        Xtmp = Xtmp.permute(1,0,2).reshape(X.shape[1],-1)
-        cov = torch.cov(Xtmp,correction=0)
-        # 
-
-        # var = ((X - mean) ** 2).mean(dim=(0, 2, 3), keepdim=True)
-    # In training mode, the current mean and variance are used
-    # Update the mean and variance using moving average
-    # running_mean = (1.0 - momentum) * running_mean + momentum * mean
-    running_mean = mean         # no running mean (alpha = momentum = 1)
-    cov_I = torch.eye(n_features).to(running_cov.device)     
-    # during warmup, we're not updating running_cov but using a statistics of current batch 
-    if cov_warmup:
-        x_var = torch.diag_embed(torch.diag(cov))
-        running_cov = (1.0 - momentum) * x_var + momentum * cov
-    # when warm up is done, running_cov is updated only during training
-    elif torch.is_grad_enabled():    
-        running_cov = (1.0 - momentum) * running_cov + momentum * cov
-    # note that we're using running_cov also during training
-    L = torch.linalg.cholesky(running_cov + eps*cov_I)
-    if len(X.shape) == 2:
-        X_hat = (X-running_mean.view(1,n_features)).T
-        # compute L.inv()@x_hat:
-        Y = torch.linalg.solve_triangular(L,X_hat,upper=False).T
-    else:
-        X_hat = X-running_mean.view(1,n_features,1,1)
-        X_hat = X_hat.permute(1,0,2,3).reshape(X.shape[1],-1)
-        Y = torch.linalg.solve_triangular(L,X_hat,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
-    return Y, running_mean.data, running_cov.data
-
-
-def pseudo_cholesky_diag(X, running_mean, running_var, eps, momentum,cov_warmup=False):
-    # Expect X to be either 2D ([N, D]) or 4D ([B, C, H, W])
-    assert len(X.shape) in (2, 4)
-    if len(X.shape) == 2:
-        shape = (1, X.shape[1])      # For fully connected: reshape to (1, D)
-    else:
-        shape = (1, X.shape[1], 1, 1)  # For convolution: reshape to (1, C, 1, 1)
-    
-    # When in evaluation mode (gradients disabled), use stored running statistics
-    if not torch.is_grad_enabled():
-        X_hat = (X - running_mean.view(shape)) / torch.sqrt(running_var.view(shape) + eps)
-    else:
-        # Compute the mean and variance for the current mini-batch
-        if len(X.shape) == 2:
-            # For 1D, compute across the feature dimension
-            mean = X.mean(dim=0)
-            var = ((X - mean) ** 2).mean(dim=0)
-        else:
-            # For 2D, compute mean/var over batch, height and width so that mean/var have shape [C]
-            mean = X.mean(dim=(0, 2, 3))
-            var = ((X - mean.view(1, -1, 1, 1)) ** 2).mean(dim=(0, 2, 3))
-        
-        # Normalize using the computed batch statistics (reshaped for broadcast)
-        X_hat = (X - mean.view(shape)) / torch.sqrt(var.view(shape) + eps)
-        # Update running statistics in place to preserve their original shape ([D] or [C])
-        running_mean.copy_((1.0 - momentum) * running_mean + momentum * mean)
-        running_var.copy_((1.0 - momentum) * running_var + momentum * var)
-    
-    # Scale and shift
-    # Y = gamma.view(shape) * X_hat + beta.view(shape)
-    Y=X_hat
-    return Y, running_mean, running_var
-
-
-class BWCholeskyBlock_diag(nn.Module):
+class BWCholeskyBlock_full_diag(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
@@ -341,7 +211,7 @@ class BWCholeskyBlock_diag(nn.Module):
             self.running_mean = self.running_mean.to(X.device)
             self.running_cov = self.running_cov.to(X.device)
         # Save the updated running_mean and moving_var
-        Y, self.running_mean, self.running_cov = cholesky_batch(
+        Y, self.running_mean, self.running_cov = cholesky_batch_full_diag(
             X, self.running_mean, self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
@@ -351,45 +221,7 @@ class BWCholeskyBlock_diag(nn.Module):
         return Y
 
 #---------block diagonal-------------
-def block_cholesky_batch_bkup(X, running_mean=None, running_cov=None, n_channels=-1, eps=1e-5, momentum=0.1,cov_warmup=False):
-    # Use is_grad_enabled to determine whether we are in training mode
-    assert len(X.shape) in (2, 4)
-    n_features = X.shape[1]
-    if n_channels==-1:
-        n_channels=n_features
-    n_groups=n_features//n_channels
-    x = X.transpose(0, 1).contiguous().view(n_groups, n_channels, -1)    
-    cov_I = torch.eye(n_channels).expand(n_groups, n_channels, n_channels).to(running_cov.device)     
-    _, d, m = x.size()
-    mean = x.mean(-1, keepdim=True)
-    xc = x - mean
-    cov = torch.baddbmm(cov_I, xc, xc.transpose(1, 2), beta=eps, alpha=1. / m)
-
-    # In training mode, the current mean and variance are used
-    # Update the mean and variance using moving average
-    # running_mean = (1.0 - momentum) * running_mean + momentum * mean
-    running_mean = mean         # no running mean (alpha = momentum = 1)
-    
-    # during warmup, we're not updating running_cov but using a statistics of current batch 
-    if cov_warmup:
-        # x_var = torch.diag_embed(torch.diag(cov))
-        x_var = torch.eye(d).unsqueeze(0).to(cov)*cov
-        running_cov = (1.0 - momentum) * x_var + momentum * cov
-    # when warm up is done, running_cov is updated only during training
-    # elif torch.is_grad_enabled():    # debug : temporarily disabling this check. 
-    else:       # debug: temporary allow running_cov to be updated during both train and validation
-        running_cov = (1.0 - momentum) * running_cov + momentum * cov
-    # note that we're using running_cov also during training
-    # L = torch.linalg.cholesky(running_cov + eps*cov_I)
-    L = torch.linalg.cholesky(running_cov)
-    if len(X.shape) == 2:
-        Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0]).permute(1,0)
-    else:
-        Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
-    return Y, running_mean.data, running_cov.data
-
-
-def block_cholesky_batch(X, running_mean=None, running_cov=None, n_channels=-1, eps=1e-5, momentum=0.1,cov_warmup=False):
+def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels=-1, eps=1e-5, momentum=0.1,cov_warmup=False):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
     n_features = X.shape[1]
@@ -436,7 +268,7 @@ class BWCholeskyBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,num_groups=1, num_channels=8,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+    def __init__(self, num_features,num_groups=1, num_channels=BW_BLK_SIZE,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively 
@@ -461,7 +293,7 @@ class BWCholeskyBlock(nn.Module):
             self.running_mean = self.running_mean.to(X.device)
             self.running_cov = self.running_cov.to(X.device)
         # Save the updated running_mean and moving_var
-        Y, self.running_mean, self.running_cov = block_cholesky_batch(
+        Y, self.running_mean, self.running_cov = cholesky_batch_block_diag(
             X, self.running_mean, self.running_cov, self.num_channels,eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
@@ -630,9 +462,33 @@ class BWItnBlock(nn.Module):
 
 
 #==============================Select Whitening===============================
+def should_use_batch_whitening(N, H, W, C, momentum=0.99, threshold=5000):
+    """Determine if BatchWhitening should be used based on number of samples
+    
+    Args:
+        N (int): Number of samples
+        H (int): Height of the image
+        W (int): Width of the image
+        C (int): Number of channels
+        threshold (int): Threshold for using BatchWhitening
+
+    The threshold is chosen based on the fact that we need enough samples for stable computation of the covariance matrix.
+    the error in computing the covariance matrix of vector with C elements from V=N*H*W samples is ~ sqrt(C*C/(2*V))
+    so for error of ~0.01 we need V > C*C/2/0.01^2 = 5000*C*C
+    """
+    print('-----------BW triage------------ \n')
+    n_samples = N * H * W / (1-momentum)
+    n_ch=C
+    print(f'N,H,W,C,mu={N,H,W,n_ch,momentum} --> n_samples = {n_samples}, th={threshold*n_ch*n_ch}')
+    return n_samples >= threshold*n_ch*n_ch
+
 # BatchWhiteningBlock=BWItnBlock
-BatchWhiteningBlock=BWCholeskyBlock
-# BatchWhiteningBlock=BWCholeskyBlock_diag
+# BatchWhiteningBlock=BWCholeskyBlock
+# BatchWhiteningBlock=BWCholeskyBlock_full_diag
+if BW_BLK_SIZE==-1:
+    BatchWhiteningBlock=BWCholeskyBlock_full_diag
+else:
+    BatchWhiteningBlock=BWCholeskyBlock
 BatchNorm=nn.BatchNorm2d
 # BatchNorm=MyBatchNorm2d
 

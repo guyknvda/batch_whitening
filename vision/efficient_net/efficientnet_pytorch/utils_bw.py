@@ -38,9 +38,11 @@ from torch.utils import model_zoo
 # Parameters for the entire model (stem, all blocks, and head)
 GlobalParams = collections.namedtuple('GlobalParams', [
     'width_coefficient', 'depth_coefficient', 'image_size', 'dropout_rate',
-    'num_classes', 'batch_norm_momentum', 'batch_norm_epsilon','batch_whitening_momentum', 'batch_whitening_epsilon',
+    'num_classes', 'batch_norm_momentum', 'batch_norm_epsilon',
     'drop_connect_rate', 'depth_divisor', 'min_depth', 'include_top',
-    'conv_stem_type','mbconv_type'])
+    'batch_whitening_momentum', 'batch_whitening_epsilon','batch_whitening_blk_size',
+    'mbconv_type', 'conv_stem_type',  'batch_size', 'bw_cov_err_threshold'
+])
 
 # Parameters for an individual model block
 BlockArgs = collections.namedtuple('BlockArgs', [
@@ -517,16 +519,19 @@ def efficientnet(width_coefficient=None, depth_coefficient=None, image_size=None
         image_size=image_size,
         dropout_rate=dropout_rate,
         num_classes=num_classes,
+        batch_size=32,
         batch_norm_momentum=0.99,
         batch_norm_epsilon=1e-3,
         batch_whitening_momentum=0.99,
         batch_whitening_epsilon=1e-3,
+        batch_whitening_blk_size=8,
         drop_connect_rate=drop_connect_rate,
         depth_divisor=8,
         min_depth=None,
         include_top=include_top,
         conv_stem_type=1,
-        mbconv_type=1
+        mbconv_type=1,
+        bw_cov_err_threshold=5000,  # Default value based on should_use_batch_whitening function
     )
 
     return blocks_args, global_params
