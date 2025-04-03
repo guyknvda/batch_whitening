@@ -4,10 +4,10 @@
 
 
 # Roberta X shape when batch_orthonorm() is called: [64, 128, 768].
-# Hence: after flattenning of B and T we get: 768 x 7192. The covariance will be 768 x 768.
-# If: e ~ sqrt(c^2/2v), then in our case c=768, v=7192 => e=6.4
-# If num_groups = 128 then each group size is 6: c=768, v=7192 => e=0.05
-# If num_groups = 32 then each group size is 24: c=24, v=7192 => e=0.2
+# Hence: after flattenning of B and T we get: 768 x 8192. The covariance will be 768 x 768.
+# If: e ~ sqrt(c^2/2v), then in our case c=768, v=8192 => e=6
+# If num_groups = 128 then each group size is 6: c=768, v=8192 => e=0.05
+# If num_groups = 32 then each group size is 24: c=24, v=8192 => e=0.2
 
 from pathlib import Path
 import torch
