@@ -103,16 +103,16 @@ class MBConvBlockBW(nn.Module):
         oup = self._block_args.input_filters * self._block_args.expand_ratio  # number of output channels
         if self._block_args.expand_ratio != 1:
             Conv2d = get_same_padding_conv2d(image_size=image_size)
-            use_bw = should_use_batch_whitening(batch_size, h, w, self._bw_blk_size, 1-self._bw_mom,bw_cov_err_threshold)
+            bw_blk_size,bw_mom_ad = get_batch_whitening_config(batch_size, h, w, inp, 1-self._bw_mom,bw_cov_err_threshold)
             
-            if global_params.mbconv_type == 0 or not use_bw:
+            if global_params.mbconv_type == 0 or bw_blk_size==1:
                 self._expand_conv = nn.Sequential(
                     Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False),
                     BatchNorm(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
                 )
             else:
                 pre_bias_block = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
-                self._expand_conv = BatchWhiteningBlock(num_features=inp, num_channels=self._bw_blk_size, momentum=self._bw_mom, eps=self._bw_eps,
+                self._expand_conv = BatchWhiteningBlock(num_features=inp, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=self._bw_eps,
                                                       pre_bias_block=pre_bias_block, num_bias_features=oup)
 
         # Depthwise convolution phase
@@ -122,7 +122,7 @@ class MBConvBlockBW(nn.Module):
         
         # Update dimensions for depthwise conv
         # h,w = calculate_output_image_size(image_size, s)
-        use_bw = should_use_batch_whitening(batch_size, h, w, self._bw_blk_size, 1-self._bw_mom,bw_cov_err_threshold)
+        # bw_blk_size,bw_mom_ad = get_batch_whitening_config(batch_size, h, w, oup, 1-self._bw_mom,bw_cov_err_threshold)
 
         if global_params.mbconv_type == 1:
             self._depthwise_block = nn.Sequential(
@@ -157,15 +157,15 @@ class MBConvBlockBW(nn.Module):
         else:
             pre_bias_block = nn.Sequential(self._project_conv)  
         h,w = image_size
-        use_bw = should_use_batch_whitening(batch_size, h, w, self._bw_blk_size, 1-self._bw_mom,bw_cov_err_threshold)
+        bw_blk_size,bw_mom_ad = get_batch_whitening_config(batch_size, h, w, oup, 1-self._bw_mom,bw_cov_err_threshold)
 
-        if global_params.mbconv_type == 0 or not use_bw :
+        if global_params.mbconv_type == 0 or bw_blk_size==1 :
             self._proj_block = nn.Sequential(
                 pre_bias_block,
                 BatchNorm(num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps)
             )
         else:
-            self._proj_block = BatchWhiteningBlock(num_features=oup, num_channels=self._bw_blk_size, momentum=self._bw_mom, eps=self._bw_eps,
+            self._proj_block = BatchWhiteningBlock(num_features=oup, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=self._bw_eps,
                                                  pre_bias_block=pre_bias_block, num_bias_features=final_oup)
 
     def forward(self, inputs, drop_connect_rate=None):
@@ -252,7 +252,7 @@ class EfficientNetBW(nn.Module):
         bn_eps = self._global_params.batch_norm_epsilon
 
         # Batch whitening parameters
-        bw_mom = 1 - self._global_params.batch_whitening_momentum
+        bw_mom = 1 - self._global_params.batch_whitening_momentum   # the momentum has the opposite meaning in pytorch. so the global param is 0.9 and what should be sent to the layer is 0.1
         bw_eps = self._global_params.batch_whitening_epsilon
         bw_blk_size = self._global_params.batch_whitening_blk_size
 
@@ -266,9 +266,9 @@ class EfficientNetBW(nn.Module):
         # Compute stem output dimensions
         stem_h,stem_w = calculate_output_image_size(image_size, 2)
         # n_samples = batch_size * stem_h * stem_w
-        use_bw = should_use_batch_whitening(batch_size, stem_h, stem_w, bw_blk_size, 1-bw_mom,self._global_params.bw_cov_err_threshold)
+        bw_blk_size,bw_mom_ad = get_batch_whitening_config(batch_size, stem_h, stem_w, in_channels, 1-bw_mom,self._global_params.bw_cov_err_threshold)
         
-        if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1 or not use_bw:
+        if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1 or bw_blk_size==1:
             self._conv_stem_block = nn.Sequential(
                 Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False),
                 BatchNorm(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
@@ -277,7 +277,7 @@ class EfficientNetBW(nn.Module):
             pre_bias_block = Conv2d(in_channels,out_channels,kernel_size=1,stride=2)
             self._conv_stem_block=nn.Sequential(
                 Conv2d(in_channels, in_channels, kernel_size=3, stride=2, bias=False,groups=in_channels),
-                BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=bw_mom, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)
+                BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)
             )
 
         image_size = calculate_output_image_size(image_size, 2)
@@ -310,16 +310,16 @@ class EfficientNetBW(nn.Module):
         # Compute head dimensions
         head_h,head_w = image_size
         # n_samples = batch_size * head_h * head_w
-        use_bw = should_use_batch_whitening(batch_size, head_h, head_w, bw_blk_size, 1-bw_mom,self._global_params.bw_cov_err_threshold)
+        bw_blk_size,bw_mom_ad = get_batch_whitening_config(batch_size, head_h, head_w, in_channels, 1-bw_mom,self._global_params.bw_cov_err_threshold)
 
         pre_bias_block = Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1 or not use_bw:
+        if self._global_params.mbconv_type==0 or self._global_params.conv_stem_type==1 or not bw_blk_size==1:
             self._conv_head_block=nn.Sequential(
                 Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
                 BatchNorm(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
             )
         else:
-            self._conv_head_block=BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=bw_mom, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)
+            self._conv_head_block=BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)
 
         # Final linear layer
         self._avg_pooling = nn.AdaptiveAvgPool2d(1)

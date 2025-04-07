@@ -566,6 +566,7 @@ def set_trial_params(config,trial):
 
     config['model']['batch_whitening_momentum'] = trial.suggest_float('batch_whitening_momentum',0.9,0.99,step=0.01)
     config['model']['batch_whitening_epsilon'] = trial.suggest_float('batch_whitening_epsilon', 1e-5, 1e-3, step=5e-5)
+    # config['model']['batch_whitening_blk_size'] = trial.suggest_categorical('batch_whitening_blk_size',[4,8,16])
     return config
 
 def objective(trial):
@@ -580,7 +581,7 @@ def objective(trial):
 
     data_set = create_data_module(config)
     
-    config['trainer']['max_epochs'] = 50
+    config['trainer']['max_epochs'] = 30
     config['trainer']['enable_checkpointing']=False
     callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
                 CustomWarmUpCallback(5000)]  
@@ -612,7 +613,7 @@ if __name__ == "__main__":
     # config_defaults['trainer']['strategy'] = 'ddp_find_unused_parameters_true'       # enable on multi gpu machine
     L.seed_everything(config_defaults['global_seed'])
     if HPARAM_OPT=='TRAIN':
-        study_filename='study.pkl'
+        study_filename='study_x.pkl'
         print('='*20,f'HPARAM OPT TRAIN on {study_filename}','='*20)
         if os.path.exists(study_filename):
             print('continuing previous study')
@@ -629,6 +630,7 @@ if __name__ == "__main__":
 
     elif HPARAM_OPT=='INFER':
         study_filename='study.pkl'
+        # study_filename='study_x.pkl'
         print('='*20,f'HPARAM OPT INFER on {study_filename}','='*20)
         if os.path.exists(study_filename):
             print('loading study')
@@ -641,7 +643,7 @@ if __name__ == "__main__":
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
         # config['wandb']['name'] = 'nbw2_exp_b0_best_modified'
-        config['wandb']['name'] = 'nbw2_exp_b0_dbw_blkdiag_best'
+        config['wandb']['name'] = 'nbw2_exp_b0_adbw_blkdiag_best'
 
         # set best params 
         config['optimizer']['lr'] = study.best_params['learning_rate']
@@ -659,6 +661,8 @@ if __name__ == "__main__":
 
         config['model']['batch_whitening_momentum'] = study.best_params['batch_whitening_momentum']
         config['model']['batch_whitening_epsilon'] = study.best_params['batch_whitening_epsilon']
+        # config['model']['batch_whitening_blk_size'] = 16
+        config['model']['batch_whitening_blk_size'] = 4
 
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:

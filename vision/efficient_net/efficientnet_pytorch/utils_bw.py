@@ -531,7 +531,7 @@ def efficientnet(width_coefficient=None, depth_coefficient=None, image_size=None
         include_top=include_top,
         conv_stem_type=1,
         mbconv_type=1,
-        bw_cov_err_threshold=5000,  # Default value based on should_use_batch_whitening function
+        bw_cov_err_threshold=0.01,  # Default value based on should_use_batch_whitening function
     )
 
     return blocks_args, global_params

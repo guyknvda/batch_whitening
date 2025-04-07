@@ -2,6 +2,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from functools import partial
+import numpy as np
+
 
 BW_BLK_SIZE=8   # -1 for full diag, >1 for block diag
 
@@ -481,6 +483,49 @@ def should_use_batch_whitening(N, H, W, C, momentum=0.99, threshold=5000):
     n_ch=C
     print(f'N,H,W,C,mu={N,H,W,n_ch,momentum} --> n_samples = {n_samples}, th={threshold*n_ch*n_ch}')
     return n_samples >= threshold*n_ch*n_ch
+
+
+
+
+def get_batch_whitening_config(N, H, W, C, momentum=0.99, threshold=0.01):
+    """Set Batch Whitening configuration based on number of samples
+    
+    Args:
+        N (int): Number of samples
+        H (int): Height of the image
+        W (int): Width of the image
+        C (int): Number of channels
+        threshold (float): Threshold for using BatchWhitening
+
+    The mechanism:
+    the effective number of samples is N*H*W/(1-momentum)
+    this number should be >= blk_size*blk_size/2*threshold^2
+
+    we can control blk_size. so we want to find what is the blk_size that satisfies the condition above.
+    so we solve for blk_size in the equation:
+    N*H*W/(1-momentum) >= blk_size*blk_size/2*threshold^2
+    blk_size >= sqrt(2*N*H*W/(1-momentum)*threshold^2)
+    now, if blk_size < 2 , we set blk_size to 1, which means using batchnorm.
+    if blk_size > C we clip it to C which means using the whole channel as a group.
+    in between, we use blk_size as nearest power of 2 to the blk_size.
+    """
+    print('-----------BW triage------------ \n')
+    n_samples = N * H * W / (1-momentum)
+
+    blk_size = int(np.sqrt(2*n_samples*threshold*threshold))
+    print(f'raw block size: {blk_size}')
+    new_mom=momentum
+    if blk_size < 2:
+        blk_size = 1
+    elif blk_size > C:
+        blk_size = C
+        new_mom=1-(2*threshold*threshold*N*H*W)/(C*C)
+    else:
+        blk_size = 2**int(np.log2(blk_size))
+    print(f'N,H,W,C,mu={N,H,W,C,momentum} --> blk_size = {blk_size}, momentum={new_mom}')
+    return blk_size,new_mom
+
+
 
 # BatchWhiteningBlock=BWItnBlock
 # BatchWhiteningBlock=BWCholeskyBlock
