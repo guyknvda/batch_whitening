@@ -519,7 +519,7 @@ def get_batch_whitening_config(N, H, W, C, momentum=0.99, threshold=0.01):
         blk_size = 1
     elif blk_size > C:
         blk_size = C
-        new_mom=1-(2*threshold*threshold*N*H*W)/(C*C)
+        new_mom=max(0,1-(2*threshold*threshold*N*H*W)/(C*C))
     else:
         blk_size = 2**int(np.log2(blk_size))
     print(f'N,H,W,C,mu={N,H,W,C,momentum} --> blk_size = {blk_size}, momentum={new_mom}')

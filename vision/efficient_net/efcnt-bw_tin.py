@@ -37,8 +37,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 # VALID_DIR = os.path.join(DATA_DIR, 'val')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
-# HPARAM_OPT='TRAIN'
-HPARAM_OPT='INFER'
+HPARAM_OPT='TRAIN'
+# HPARAM_OPT='INFER'
 # HPARAM_OPT='OFF'
  
 
@@ -520,7 +520,7 @@ def main(config):
     # analyze_model_dimensions(model.model, input_size)  # Note: we use model.model because TinyImageNetModule wraps the actual model
     
     # model = torch.compile(model)
-
+    print(model)
     trainer.fit(model, datamodule=data_set)
     model = TinyImageNetModule.load_from_checkpoint(
         trainer.checkpoint_callback.best_model_path
@@ -540,7 +540,7 @@ config_defaults = {'global_seed':42,
                             'project':'bw-efcnt_tin',
                             'name':'bw_exp_b0',},
                     'dataset':{ 'data_dir':DATA_DIR,
-                                'batch_size':64,
+                                'batch_size':32,
                                 'image_size':224,
                                 'recompute_stats':False,
                                 'val_split':0.2},
@@ -556,7 +556,7 @@ config_defaults = {'global_seed':42,
 def set_trial_params(config,trial):
     config['optimizer']['lr'] = trial.suggest_float('learning_rate', 1e-5, 1e-3, step=5e-5)
     config['optimizer']['weight_decay'] = trial.suggest_categorical('weight_decay', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2])
-    config['dataset']['batch_size'] = trial.suggest_categorical('batch_size', [32,64,128,256,512])
+    # config['dataset']['batch_size'] = trial.suggest_categorical('batch_size', [32,64,128,256,512])
     config['model']['dropout_rate'] = trial.suggest_float('dropout', 0.2,0.8,step=0.1)
     config['lr_scheduler']['step_size'] = trial.suggest_int('lr_sched_step_size',5,105,step=10)
     config['lr_scheduler']['gamma'] = trial.suggest_categorical('lr_sched_gamma',[0.9,0.95,0.99])
@@ -570,38 +570,68 @@ def set_trial_params(config,trial):
     return config
 
 def objective(trial):
+    # Open the log file in append mode ('a+')
+    log_file = 'optimization_trials.log'
+    with open(log_file, 'a+') as f:
+        # Write trial separator
+        trial_header = f'\n{"="*50} TRIAL {trial.number} START {"="*50}\n'
+        f.write(trial_header)
+        print(trial_header)  # Also print to console
 
-    config = copy.deepcopy(config_defaults)
-    config.pop('wandb') 
-    # Suggest values for hyperparameters
-    config = set_trial_params(config,trial)
-    print('='*50,'TRIAL START','='*50)
-    print(config)
-    print('='*101)
-
-    data_set = create_data_module(config)
-    
-    config['trainer']['max_epochs'] = 30
-    config['trainer']['enable_checkpointing']=False
-    callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
-                CustomWarmUpCallback(5000)]  
-
-    trainer = create_trainer(config,callbacks)
-
-    if config['lr_scheduler']['sched_name']=='CosineAnnealingWarmRestarts':   # need to compute T_0  
-        n_epochs = config['trainer']['max_epochs']
-        n_cycles = config['lr_scheduler'].pop('n_cycles',1)
-        config['lr_scheduler']['T_0'] = n_epochs//n_cycles
+        config = copy.deepcopy(config_defaults)
+        config.pop('wandb') 
+        # Suggest values for hyperparameters
+        config = set_trial_params(config,trial)
         
+        # Write config to file
+        config_str = f'Configuration:\n{config}\n{"="*101}\n'
+        f.write(config_str)
+        print(config_str)  # Also print to console
 
-    model = create_model(config)
-    # print the summary of the model
-    print(model)
+        data_set = create_data_module(config)
+        
+        config['trainer']['max_epochs'] = 30
+        config['trainer']['enable_checkpointing']=False
+        callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
+                    CustomWarmUpCallback(5000)]  
 
-    trainer.fit(model, datamodule=data_set)
+        trainer = create_trainer(config,callbacks)
 
-    # Return the final validation loss (or other metric)
-    return trainer.callback_metrics['train_loss'].item()
+        if config['lr_scheduler']['sched_name']=='CosineAnnealingWarmRestarts':   # need to compute T_0  
+            n_epochs = config['trainer']['max_epochs']
+            n_cycles = config['lr_scheduler'].pop('n_cycles',1)
+            config['lr_scheduler']['T_0'] = n_epochs//n_cycles
+            
+        model = create_model(config)
+        
+        # Redirect model summary to string
+        import io
+        from contextlib import redirect_stdout
+        
+        # Capture model summary
+        summary_buffer = io.StringIO()
+        with redirect_stdout(summary_buffer):
+            print(model)
+        model_summary = summary_buffer.getvalue()
+        
+        # Write model summary to file
+        f.write(f'\nModel Summary:\n{model_summary}\n')
+        print(f'\nModel Summary:\n{model_summary}')  # Also print to console
+
+        trainer.fit(model, datamodule=data_set)
+
+        # Write final metrics
+        final_loss = trainer.callback_metrics['train_loss'].item()
+        result_str = f'\nFinal training loss: {final_loss}\n'
+        f.write(result_str)
+        print(result_str)  # Also print to console
+
+        # Write trial end separator
+        trial_footer = f'{"="*50} TRIAL {trial.number} END {"="*50}\n'
+        f.write(trial_footer)
+        print(trial_footer)  # Also print to console
+
+        return final_loss
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a neural network with specified GPU")
@@ -622,7 +652,7 @@ if __name__ == "__main__":
         else:
             print('starting new study')
             study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=10)
+        study.optimize(objective, n_trials=3)      # each trial takes ~2.5hours
         with open(study_filename, 'wb') as file:
             pickle.dump(study, file)        
         # Print the best hyperparameters found
