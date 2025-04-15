@@ -652,7 +652,7 @@ if __name__ == "__main__":
         else:
             print('starting new study')
             study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=3)      # each trial takes ~2.5hours
+        study.optimize(objective, n_trials=20)      # each trial takes ~2.5hours
         with open(study_filename, 'wb') as file:
             pickle.dump(study, file)        
         # Print the best hyperparameters found

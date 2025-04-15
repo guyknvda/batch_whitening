@@ -119,12 +119,28 @@ def fix_corr(corr):
     return a*corr
 
 
+# def fix_cov(covmat):
+#     a=torch.ones_like(covmat)*0.9
+#     a.fill_diagonal_(1.0)
+#     # a=a.clone()  # so not to lose the gradients in backprop
+#     # torch.diagonal(a).fill_(1.0)
+#     return a*covmat
+
 def fix_cov(covmat):
-    a=torch.ones_like(covmat)*0.9
-    a.fill_diagonal_(1.0)
-    # a=a.clone()  # so not to lose the gradients in backprop
-    # torch.diagonal(a).fill_(1.0)
-    return a*covmat
+    # Create a tensor of 0.9s with the same shape as covmat
+    a = torch.ones_like(covmat) * 0.9
+    
+    # Handle both 2D and 3D cases for setting diagonal to 1.0
+    if covmat.dim() == 2:
+        # For 2D case [D,D]
+        a.fill_diagonal_(1.0)
+    else:
+        # For 3D case [B,D,D]
+        # Set diagonal to 1.0 for each matrix in the batch
+        eye = torch.eye(covmat.size(-1), device=covmat.device)
+        a = a * (1 - eye) + eye
+    
+    return a * covmat
 
 # num_channels is the number of channels in each group (bw block size)
 def get_grp_ch(num_features,num_groups=1,num_channels=-1):
@@ -253,6 +269,8 @@ def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels
             # elif torch.is_grad_enabled():    # debug : temporarily disabling this check. 
             else:       # debug: temporary allow running_cov to be updated during both train and validation
                 running_cov.copy_((1.0 - momentum) * running_cov + momentum * cov)
+            # fix the cov matrix
+            running_cov=fix_cov(running_cov)
     else:
         # Evaluation mode: use stored running statistics directly.
         xc = x - running_mean
@@ -523,8 +541,8 @@ def get_batch_whitening_config(N, H, W, C, momentum=0.99, threshold=0.01):
     else:
         blk_size = 2**int(np.log2(blk_size))
     print(f'N,H,W,C,mu={N,H,W,C,momentum} --> blk_size = {blk_size}, momentum={new_mom}')
-    return blk_size,new_mom
-
+    # return blk_size,new_mom
+    return blk_size,momentum
 
 
 # BatchWhiteningBlock=BWItnBlock
