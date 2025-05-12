@@ -566,7 +566,8 @@ def set_trial_params(config,trial):
 
     config['model']['batch_whitening_momentum'] = trial.suggest_float('batch_whitening_momentum',0.9,0.99,step=0.01)
     config['model']['batch_whitening_epsilon'] = trial.suggest_float('batch_whitening_epsilon', 1e-5, 1e-3, step=5e-5)
-    # config['model']['batch_whitening_blk_size'] = trial.suggest_categorical('batch_whitening_blk_size',[4,8,16])
+    config['model']['bw_fix_factor'] = trial.suggest_float('bw_fix_factor',0.9,0.99,step=0.01)
+    config['model']['bw_cov_err_threshold']=trial.suggest_categorical('bw_cov_err_threshold',[0.01,0.05,0.1,0.2,0.3])
     return config
 
 def objective(trial):
@@ -643,7 +644,7 @@ if __name__ == "__main__":
     # config_defaults['trainer']['strategy'] = 'ddp_find_unused_parameters_true'       # enable on multi gpu machine
     L.seed_everything(config_defaults['global_seed'])
     if HPARAM_OPT=='TRAIN':
-        study_filename='study_x.pkl'
+        study_filename='study_xx.pkl'
         print('='*20,f'HPARAM OPT TRAIN on {study_filename}','='*20)
         if os.path.exists(study_filename):
             print('continuing previous study')
@@ -660,6 +661,7 @@ if __name__ == "__main__":
 
     elif HPARAM_OPT=='INFER':
         study_filename='study.pkl'
+        # study_filename='vision/efficient_net/study.pkl' # for debugging
         # study_filename='study_x.pkl'
         print('='*20,f'HPARAM OPT INFER on {study_filename}','='*20)
         if os.path.exists(study_filename):

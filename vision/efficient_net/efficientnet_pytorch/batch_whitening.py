@@ -126,9 +126,9 @@ def fix_corr(corr):
 #     # torch.diagonal(a).fill_(1.0)
 #     return a*covmat
 
-def fix_cov(covmat):
-    # Create a tensor of 0.9s with the same shape as covmat
-    a = torch.ones_like(covmat) * 0.9
+def fix_cov(covmat,fix_factor=0.9):
+    # Create a tensor of fix_factor with the same shape as covmat
+    a = torch.ones_like(covmat) * fix_factor
     
     # Handle both 2D and 3D cases for setting diagonal to 1.0
     if covmat.dim() == 2:
@@ -239,7 +239,7 @@ class BWCholeskyBlock_full_diag(nn.Module):
         return Y
 
 #---------block diagonal-------------
-def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels=-1, eps=1e-5, momentum=0.1,cov_warmup=False):
+def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels=-1, eps=1e-5, momentum=0.1,cov_warmup=False,fix_factor=0.9):
     # Use is_grad_enabled to determine whether we are in training mode
     assert len(X.shape) in (2, 4)
     n_features = X.shape[1]
@@ -270,7 +270,7 @@ def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels
             else:       # debug: temporary allow running_cov to be updated during both train and validation
                 running_cov.copy_((1.0 - momentum) * running_cov + momentum * cov)
             # fix the cov matrix
-            running_cov=fix_cov(running_cov)
+            running_cov=fix_cov(running_cov,fix_factor)
     else:
         # Evaluation mode: use stored running statistics directly.
         xc = x - running_mean
@@ -288,7 +288,7 @@ class BWCholeskyBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,num_groups=1, num_channels=BW_BLK_SIZE,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None):
+    def __init__(self, num_features,num_groups=1, num_channels=BW_BLK_SIZE,momentum=0.1,eps=1e-5,pre_bias_block=None,num_bias_features=None,fix_factor=0.9):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively 
@@ -303,7 +303,7 @@ class BWCholeskyBlock(nn.Module):
         self.register_buffer('running_mean', torch.zeros(self.num_groups, self.num_channels, 1))
         self.register_buffer('running_cov', torch.eye(self.num_channels).expand(self.num_groups, self.num_channels, self.num_channels))
         self.pre_bias_block=pre_bias_block
-
+        self.fix_factor=fix_factor
         self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
 
     def forward(self, X):
@@ -314,7 +314,7 @@ class BWCholeskyBlock(nn.Module):
             self.running_cov = self.running_cov.to(X.device)
         # Save the updated running_mean and moving_var
         Y, self.running_mean, self.running_cov = cholesky_batch_block_diag(
-            X, self.running_mean, self.running_cov, self.num_channels,eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
+            X, self.running_mean, self.running_cov, self.num_channels,eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup,fix_factor=self.fix_factor)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
         # add the bias
@@ -537,12 +537,12 @@ def get_batch_whitening_config(N, H, W, C, momentum=0.99, threshold=0.01):
         blk_size = 1
     elif blk_size > C:
         blk_size = C
-        new_mom=max(0,1-(2*threshold*threshold*N*H*W)/(C*C))
+        # new_mom=max(0,1-(2*threshold*threshold*N*H*W)/(C*C))
     else:
         blk_size = 2**int(np.log2(blk_size))
     print(f'N,H,W,C,mu={N,H,W,C,momentum} --> blk_size = {blk_size}, momentum={new_mom}')
-    # return blk_size,new_mom
-    return blk_size,momentum
+    return blk_size,new_mom
+
 
 
 # BatchWhiteningBlock=BWItnBlock

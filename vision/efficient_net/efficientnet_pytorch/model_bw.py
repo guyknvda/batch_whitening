@@ -90,6 +90,7 @@ class MBConvBlockBW(nn.Module):
         self._bw_mom = 1 - global_params.batch_whitening_momentum
         self._bw_eps = global_params.batch_whitening_epsilon
         self._bw_blk_size = global_params.batch_whitening_blk_size
+        self._bw_fix_factor = global_params.bw_fix_factor
         # Get dimensions from block_args
         batch_size = global_params.batch_size
         h, w = image_size
@@ -113,7 +114,7 @@ class MBConvBlockBW(nn.Module):
             else:
                 pre_bias_block = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
                 self._expand_conv = BatchWhiteningBlock(num_features=inp, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=self._bw_eps,
-                                                      pre_bias_block=pre_bias_block, num_bias_features=oup)
+                                                      pre_bias_block=pre_bias_block, num_bias_features=oup,fix_factor=self._bw_fix_factor)
 
         # Depthwise convolution phase
         k = self._block_args.kernel_size
@@ -166,7 +167,7 @@ class MBConvBlockBW(nn.Module):
             )
         else:
             self._proj_block = BatchWhiteningBlock(num_features=oup, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=self._bw_eps,
-                                                 pre_bias_block=pre_bias_block, num_bias_features=final_oup)
+                                                 pre_bias_block=pre_bias_block, num_bias_features=final_oup,fix_factor=self._bw_fix_factor)
 
     def forward(self, inputs, drop_connect_rate=None):
         """MBConvBlock's forward function.
@@ -255,6 +256,7 @@ class EfficientNetBW(nn.Module):
         bw_mom = 1 - self._global_params.batch_whitening_momentum   # the momentum has the opposite meaning in pytorch. so the global param is 0.9 and what should be sent to the layer is 0.1
         bw_eps = self._global_params.batch_whitening_epsilon
         bw_blk_size = self._global_params.batch_whitening_blk_size
+        bw_fix_factor = self._global_params.bw_fix_factor
 
         # Get stem static or dynamic convolution depending on image size
         Conv2d = get_same_padding_conv2d(image_size=image_size)
@@ -277,7 +279,7 @@ class EfficientNetBW(nn.Module):
             pre_bias_block = Conv2d(in_channels,out_channels,kernel_size=1,stride=2)
             self._conv_stem_block=nn.Sequential(
                 Conv2d(in_channels, in_channels, kernel_size=3, stride=2, bias=False,groups=in_channels),
-                BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)
+                BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels,fix_factor=bw_fix_factor)
             )
 
         image_size = calculate_output_image_size(image_size, 2)
@@ -319,7 +321,7 @@ class EfficientNetBW(nn.Module):
                 BatchNorm(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
             )
         else:
-            self._conv_head_block=BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels)
+            self._conv_head_block=BatchWhiteningBlock(num_features=in_channels, num_channels=bw_blk_size, momentum=1-bw_mom_ad, eps=bw_eps,pre_bias_block=pre_bias_block,num_bias_features=out_channels,fix_factor=bw_fix_factor)
 
         # Final linear layer
         self._avg_pooling = nn.AdaptiveAvgPool2d(1)

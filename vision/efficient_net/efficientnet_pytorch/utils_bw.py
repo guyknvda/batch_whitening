@@ -41,7 +41,7 @@ GlobalParams = collections.namedtuple('GlobalParams', [
     'num_classes', 'batch_norm_momentum', 'batch_norm_epsilon',
     'drop_connect_rate', 'depth_divisor', 'min_depth', 'include_top',
     'batch_whitening_momentum', 'batch_whitening_epsilon','batch_whitening_blk_size',
-    'mbconv_type', 'conv_stem_type',  'batch_size', 'bw_cov_err_threshold'
+    'mbconv_type', 'conv_stem_type',  'batch_size', 'bw_cov_err_threshold','bw_fix_factor'  
 ])
 
 # Parameters for an individual model block
@@ -532,6 +532,7 @@ def efficientnet(width_coefficient=None, depth_coefficient=None, image_size=None
         conv_stem_type=1,
         mbconv_type=1,
         bw_cov_err_threshold=0.01,  # Default value based on should_use_batch_whitening function
+        bw_fix_factor=0.9,
     )
 
     return blocks_args, global_params
