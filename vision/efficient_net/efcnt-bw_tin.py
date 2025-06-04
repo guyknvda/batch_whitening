@@ -37,8 +37,8 @@ TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 # VALID_DIR = os.path.join(DATA_DIR, 'val')
 VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
-HPARAM_OPT='TRAIN'
-# HPARAM_OPT='INFER'
+# HPARAM_OPT='TRAIN'
+HPARAM_OPT='INFER'
 # HPARAM_OPT='OFF'
  
 
@@ -660,7 +660,8 @@ if __name__ == "__main__":
         print("Best hyperparameters: ", study.best_trial.params)
 
     elif HPARAM_OPT=='INFER':
-        study_filename='study.pkl'
+        # study_filename='study.pkl'
+        study_filename='study_xx.pkl'
         # study_filename='vision/efficient_net/study.pkl' # for debugging
         # study_filename='study_x.pkl'
         print('='*20,f'HPARAM OPT INFER on {study_filename}','='*20)
@@ -670,31 +671,38 @@ if __name__ == "__main__":
                 study=pickle.load(file)
         else:
             raise ValueError(f'couldnt find {study_filename}')
-        print(f'best trial: {study.best_trial.number}')
-        print(f'best params: {study.best_params}')
+        best_trial_id = study.best_trial.number
+        print(f'best trial: {best_trial_id}')
+        # print(f'best params: {study.best_params}')
         config = copy.deepcopy(config_defaults)
         # config.pop('wandb') 
         # config['wandb']['name'] = 'nbw2_exp_b0_best_modified'
-        config['wandb']['name'] = 'nbw2_exp_b0_adbw_blkdiag_best'
+        # selected_trial_id = best_trial_id
+        selected_trial_id = 71
+        print(f'selected trial: {selected_trial_id}')
+        print(f'selected trial params: {study.trials[selected_trial_id].params}')
+        config['wandb']['name'] = f'nbw2_exp_b0_adbw_blkdiag_xx_trial_{selected_trial_id}'
 
-        # set best params 
-        config['optimizer']['lr'] = study.best_params['learning_rate']
-        config['optimizer']['weight_decay'] = study.best_params['weight_decay']
+        # set params for selected trial 
+        config['optimizer']['lr'] = study.trials[selected_trial_id].params['learning_rate']
+        config['optimizer']['weight_decay'] = study.trials[selected_trial_id].params['weight_decay']
         # config['dataset']['batch_size'] = study.best_params['batch_size']
         config['dataset']['batch_size'] = 32    # override due to performance issues (batch whitening gets extremely slow on larger batch size)
-        config['model']['dropout_rate'] = study.best_params['dropout']
-        config['lr_scheduler']['step_size'] = study.best_params['lr_sched_step_size']
-        config['lr_scheduler']['gamma'] = study.best_params['lr_sched_gamma']
+        config['model']['dropout_rate'] = study.trials[selected_trial_id].params['dropout']
+        config['lr_scheduler']['step_size'] = study.trials[selected_trial_id].params['lr_sched_step_size']
+        config['lr_scheduler']['gamma'] = study.trials[selected_trial_id].params['lr_sched_gamma']
 
-        config['model']['conv_stem_type'] = study.best_params['conv_stem_type']
+        config['model']['conv_stem_type'] = study.trials[selected_trial_id].params['conv_stem_type']
         # config['model']['conv_stem_type'] = 1       # temp experiment to disable bw on all layers except for MBConv blocks
-        config['model']['mbconv_type'] = study.best_params['mbconv_type']
+        config['model']['mbconv_type'] = study.trials[selected_trial_id].params['mbconv_type']
         # config['model']['mbconv_type']=0        # for debug - disable batch whitening. use bn .
 
-        config['model']['batch_whitening_momentum'] = study.best_params['batch_whitening_momentum']
-        config['model']['batch_whitening_epsilon'] = study.best_params['batch_whitening_epsilon']
+        config['model']['batch_whitening_momentum'] = study.trials[selected_trial_id].params['batch_whitening_momentum']
+        config['model']['batch_whitening_epsilon'] = study.trials[selected_trial_id].params['batch_whitening_epsilon']
         # config['model']['batch_whitening_blk_size'] = 16
-        config['model']['batch_whitening_blk_size'] = 4
+        # config['model']['batch_whitening_blk_size'] = 4   # irrelevant. computed dynamically.
+        config['model']['bw_fix_factor'] = study.trials[selected_trial_id].params['bw_fix_factor']
+        config['model']['bw_cov_err_threshold'] = study.trials[selected_trial_id].params['bw_cov_err_threshold']
 
         config['trainer']['max_epochs'] = 50
         if args.gpu>=0:
