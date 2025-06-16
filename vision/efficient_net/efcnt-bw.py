@@ -18,6 +18,7 @@ import pickle
 from random import randint
 import urllib
 import zipfile
+import ast
 
 import lightning as L
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
@@ -29,17 +30,16 @@ import optuna
 
 
 
-# to download the dataset : wget http://cs231n.stanford.edu/tiny-imagenet-200.zip
+
 # set directories
-DATA_DIR = '/datasets/vision/tiny-imagenet-200' # Original images come in shapes of [3,64,64]
+
+DATA_DIRS = {
+    'tin': '/datasets/vision/tiny-imagenet-200',        # to download the dataset : wget http://cs231n.stanford.edu/tiny-imagenet-200.zip Original images come in shapes of [3,64,64]
+    'imgnet': '/datasets/vision/imagenet/ILSVRC/Data/CLS-LOC/' # to download the dataset : wget http://www.image-net.org/download-images.php
+}
 # Define training and validation data paths
-TRAIN_DIR = os.path.join(DATA_DIR, 'train') 
-# VALID_DIR = os.path.join(DATA_DIR, 'val')
-VALID_DIR = os.path.join(DATA_DIR, 'val')
 CHECKPOINT_PATH = "saved_models"
-# HPARAM_OPT='TRAIN'
-HPARAM_OPT='INFER'
-# HPARAM_OPT='OFF'
+# HPARAM_OPT is deprecated. Use --mode CLI argument instead.
  
 
 ############################################
@@ -47,7 +47,6 @@ HPARAM_OPT='INFER'
 # Unlike training folder where images are already arranged in sub folders based 
 # on their labels, images in validation folder are all inside a single folder. 
 # Validation folder comes with images folder and val_annotations txt file. 
-
 # Create separate validation subfolders for the validation images based on
 # their labels indicated in the val_annotations txt file
 def prepare_tinyimagenet_validation_folder(val_img_dir):
@@ -88,20 +87,6 @@ def prepare_tinyimagenet_validation_folder(val_img_dir):
     print('Validation subfolders ready')
     return
 
-def get_class_to_name_dict(data_dir=DATA_DIR):
-    # Save class names (for corresponding labels) as dict from words.txt file
-    class_to_name_dict = dict()
-    fp = open(os.path.join(DATA_DIR, 'words.txt'), 'r')
-    data = fp.readlines()
-    for line in data:
-        words = line.strip('\n').split('\t')
-        class_to_name_dict[words[0]] = words[1].split(',')[0]
-    fp.close()
-    return class_to_name_dict
-
-
-
-
 
 # compute training data statistics
 def calculate_mean_std(loader):
@@ -119,14 +104,22 @@ def calculate_mean_std(loader):
     return mean, std
     
 # Set recompute_stats to True to recompute the statistics
-def get_training_stats(recompute_stats=False,train_dir=TRAIN_DIR):
+def get_training_stats(data_dir,recompute_stats=False):
     if recompute_stats:
+        train_dir = os.path.join(data_dir,'train')
         train_dataset = datasets.ImageFolder(root=train_dir, transform=T.Compose([T.ToTensor()]))
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
         trn_mean, trn_std = calculate_mean_std(train_loader)
-    else:   # use precomputed statistics of TinyImageNet training data
+    elif data_dir == DATA_DIRS['tin']:
+        # use precomputed statistics of TinyImageNet training data
         trn_mean = [0.4802, 0.4481, 0.3975]
         trn_std = [0.2296, 0.2263, 0.2255]
+    elif data_dir == DATA_DIRS['imgnet']:
+        # use precomputed statistics of ImageNet training data
+        trn_mean = [0.485, 0.456, 0.406]
+        trn_std = [0.229, 0.224, 0.225]
+    else:
+        raise ValueError(f"Unknown dataset: {data_dir}")
     return trn_mean, trn_std
 
 
@@ -165,23 +158,74 @@ class TinyImageNetDataModule(L.LightningModule):
         '''
         generate the train dataloader
         '''
-        kwargs = {"pin_memory": True, "num_workers": 11}
+        kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True, **kwargs)
     
     def val_dataloader(self):
         '''
         generate the validation dataloader
         '''
-        kwargs = {"pin_memory": True, "num_workers": 11}
+        kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.val_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
     
     def test_dataloader(self):
         '''
         generate the test dataloader
         '''
-        kwargs = {"pin_memory": True, "num_workers": 11}
+        kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
     
+class ImageNetDataModule(L.LightningModule):
+    def __init__(self,config,transform=None):
+        super().__init__()
+        self.data_dir = config['data_dir']
+        self.batch_size = config['batch_size']
+        
+        self.val_split = config['val_split']
+        self.transform = transform
+
+
+    def prepare_data(self):
+        '''
+        - download the dataset
+        - extract the dataset
+        - create a validation folder
+        '''
+        return
+    
+    def setup(self, stage=None):
+        '''
+        - create train, val, and test datasets
+        - compute stats
+        - apply transforms
+        '''
+        # Read image files to pytorch dataset using ImageFolder, a generic data 
+        # loader where images are in format root/label/filename
+        # See https://pytorch.org/vision/stable/datasets.html
+        self.train_ds = datasets.ImageFolder(os.path.join(self.data_dir,'train'), transform=self.transform)
+        self.val_ds = datasets.ImageFolder(os.path.join(self.data_dir,'val'), transform=self.transform)
+        self.test_ds = datasets.ImageFolder(os.path.join(self.data_dir,'val'), transform=self.transform)
+
+    def train_dataloader(self):
+        '''
+        generate the train dataloader
+        '''
+        kwargs = {"pin_memory": True, "num_workers": 24}
+        return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True, **kwargs)
+    
+    def val_dataloader(self):
+        '''
+        generate the validation dataloader
+        '''
+        kwargs = {"pin_memory": True, "num_workers": 24}
+        return DataLoader(self.val_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
+    
+    def test_dataloader(self):
+        '''
+        generate the test dataloader
+        '''
+        kwargs = {"pin_memory": True, "num_workers": 24}
+        return DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
 
     
 ############################################
@@ -213,9 +257,9 @@ def create_efficientnet_model(model_name, model_hparams, load_pretrained=False):
     return model
 
 
-class TinyImageNetModule(L.LightningModule):
+class ImgClsModel(L.LightningModule):
     def __init__(self, model_name, model_hparams, optimizer_name, optimizer_hparams,lr_scheduler_name, lr_scheduler_hparams,data_hparams):
-        """TinyImageNetModule.
+        """ImgClsModel.
 
         Args:
             model_hparams: Hyperparameters for the model, as dictionary.
@@ -360,10 +404,6 @@ def save_cov_stats(model):
 
 
     
-
-
-
-
 class CustomWarmUpCallback(L.Callback):
     def __init__(self, warmup_steps):
         super().__init__()
@@ -411,9 +451,9 @@ def create_model(config):
     save_name = model_name
     if config['train']['eval_only'] and config['train']['ckpt'] is not None and os.path.isfile(os.path.join(CHECKPOINT_PATH, save_name + ".ckpt")):
         print(f"Found pretrained model at {config['train']['ckpt']}, loading...")
-        model = TinyImageNetModule.load_from_checkpoint(config['train']['ckpt'])
+        model = ImgClsModel.load_from_checkpoint(config['train']['ckpt'])
     else:
-        model = TinyImageNetModule(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'],config['dataset'])
+        model = ImgClsModel(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'],config['dataset'])
     # register_hooks(model)
     return model
 
@@ -424,15 +464,8 @@ def create_data_module(config):
         trn_mean = [0.485, 0.456, 0.406]
         trn_std = [0.229, 0.224, 0.225]
     else:
-        trn_mean, trn_std = get_training_stats(recompute_stats=config['dataset']['recompute_stats'])
-    # preprocess_transform = T.Compose([
-    #             T.Resize(256), # Resize images to 256 x 256
-    #             T.CenterCrop(config['dataset']['image_size']), # Center crop image
-    #             T.RandomHorizontalFlip(),
-    #             # T.TenCrop(config['dataset']['image_size']),
-    #             T.ToTensor(),  # Converting cropped images to tensors
-    #             T.Normalize(mean=trn_mean, std=trn_std)
-    # ])
+        trn_mean, trn_std = get_training_stats(data_dir=config['dataset']['data_dir'],
+                                               recompute_stats=config['dataset']['recompute_stats'])
 
     preprocess_transform = T.Compose([
             T.Resize(256),
@@ -445,8 +478,12 @@ def create_data_module(config):
             T.Normalize(mean=trn_mean, std=trn_std)
     ])
 
-
-    dataset_module = TinyImageNetDataModule(config['dataset'],transform=preprocess_transform)
+    if config['dataset']['data_dir'] == DATA_DIRS['tin']:
+        dataset_module = TinyImageNetDataModule(config['dataset'],transform=preprocess_transform)
+    elif config['dataset']['data_dir'] == DATA_DIRS['imgnet']:
+        dataset_module = ImageNetDataModule(config['dataset'],transform=preprocess_transform)
+    else:
+        raise ValueError(f"Unknown dataset: {config['dataset']['data_dir']}")
     return dataset_module
 
         
@@ -522,34 +559,54 @@ def main(config):
     # model = torch.compile(model)
     print(model)
     trainer.fit(model, datamodule=data_set)
-    model = TinyImageNetModule.load_from_checkpoint(
+    model = ImgClsModel.load_from_checkpoint(
         trainer.checkpoint_callback.best_model_path
     )  # Load best checkpoint after training
 
     if config['train']['test']:
         val_result = trainer.test(model, datamodule=data_set)
-        result = {"val": val_result[0]["test_acc"]}
+        result = {"test": val_result[0]["test_acc"]}
 
-    print(f"Test accuracy: {result['val']:.3f}")
+    print(f"Test accuracy: {result['test']:.3f}")
     return model, result
 
 
 
 config_defaults = {'global_seed':42,
                 'wandb':{'mode':'online',
-                            'project':'bw-efcnt_tin',
+                            'project':'bw-efcnt',
                             'name':'bw_exp_b0',},
-                    'dataset':{ 'data_dir':DATA_DIR,
+                    'dataset':{ 'data_dir':'',  # Will be set based on dataset choice
                                 'batch_size':32,
                                 'image_size':224,
                                 'recompute_stats':False,
                                 'val_split':0.2},
                     'model':{ 'name':'efficientnet-b0', 'load_pretrained':False, 'num_classes':200,'dropout_rate':0.5,'conv_stem_type':1,'mbconv_type':1},
                     'optimizer':{ 'opt_name':'AdamW', 'lr':0.001, 'weight_decay':0.001},
-                    'lr_scheduler':{ 'sched_name':'StepLR', 'step_size':5, 'gamma':0.98},
                     'trainer':{ 'max_epochs':300, 'devices':'auto','strategy':'auto','precision':32},
                     'train':{ 'ckpt':None, 'test':True, 'eval_only':False},
                     }
+
+# Dataset-specific configuration overrides
+dataset_configs = {
+    'tin': {
+        'wandb': {'project': 'bw-efcnt_tin'},
+        'model': {'num_classes': 200},
+        # 'dataset': {'image_size': 64},  # TinyImageNet original size
+        'dataset': {'image_size': 224},  
+        'trainer': {'max_epochs': 50},
+        'optimizer': {'lr': 0.001, 'weight_decay': 0.001},
+        'lr_scheduler':{ 'sched_name':'StepLR', 'step_size':5, 'gamma':0.98},
+    },
+    'imgnet': {
+        'wandb': {'project': 'efcnt_imgnet'},
+        'model': {'num_classes': 1000, 'load_pretrained': False},
+        'dataset': {'image_size': 224},  # ImageNet standard size
+        'trainer': {'max_epochs': 100},  # ImageNet typically needs fewer epochs
+        'optimizer': {'lr': 0.001, 'weight_decay': 0.001},  # Lower LR for pretrained
+        'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.0001},
+    }
+}
 
 
 
@@ -579,31 +636,48 @@ def objective(trial):
         f.write(trial_header)
         print(trial_header)  # Also print to console
 
-        config = copy.deepcopy(config_defaults)
-        config.pop('wandb') 
+        # Note: This function is called from within the TRAIN mode, 
+        # so it should use the same configuration that was set up there.
+        # We'll need to pass the base config to this function, but for now
+        # we'll reconstruct it here to maintain compatibility.
+        
+        # Get the dataset from the global context (set in main)
+        # This is a bit of a hack, but maintains backward compatibility
+        import sys
+        if hasattr(sys.modules[__name__], '_current_dataset'):
+            dataset = sys.modules[__name__]._current_dataset
+        else:
+            dataset = 'tin'  # default fallback
+            
+        # Reconstruct the config hierarchy
+        trial_config = copy.deepcopy(config_defaults)
+        if dataset in dataset_configs:
+            trial_config = merge_configs(trial_config, dataset_configs[dataset])
+        
+        trial_config.pop('wandb', None) 
         # Suggest values for hyperparameters
-        config = set_trial_params(config,trial)
+        trial_config = set_trial_params(trial_config, trial)
         
         # Write config to file
-        config_str = f'Configuration:\n{config}\n{"="*101}\n'
+        config_str = f'Configuration:\n{trial_config}\n{"="*101}\n'
         f.write(config_str)
         print(config_str)  # Also print to console
 
-        data_set = create_data_module(config)
+        data_set = create_data_module(trial_config)
         
-        config['trainer']['max_epochs'] = 30
-        config['trainer']['enable_checkpointing']=False
+        trial_config['trainer']['max_epochs'] = 30
+        trial_config['trainer']['enable_checkpointing']=False
         callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
                     CustomWarmUpCallback(5000)]  
 
-        trainer = create_trainer(config,callbacks)
+        trainer = create_trainer(trial_config,callbacks)
 
-        if config['lr_scheduler']['sched_name']=='CosineAnnealingWarmRestarts':   # need to compute T_0  
-            n_epochs = config['trainer']['max_epochs']
-            n_cycles = config['lr_scheduler'].pop('n_cycles',1)
-            config['lr_scheduler']['T_0'] = n_epochs//n_cycles
+        if trial_config['lr_scheduler']['sched_name']=='CosineAnnealingWarmRestarts':   # need to compute T_0  
+            n_epochs = trial_config['trainer']['max_epochs']
+            n_cycles = trial_config['lr_scheduler'].pop('n_cycles',1)
+            trial_config['lr_scheduler']['T_0'] = n_epochs//n_cycles
             
-        model = create_model(config)
+        model = create_model(trial_config)
         
         # Redirect model summary to string
         import io
@@ -634,106 +708,181 @@ def objective(trial):
 
         return final_loss
 
+# ------------------------------------------------------------
+# Utility to override nested configuration entries from CLI
+# ------------------------------------------------------------
+
+def merge_configs(base_config, override_config):
+    """Recursively merge override_config into base_config.
+    
+    This creates a deep copy of base_config and applies overrides from override_config.
+    Nested dictionaries are merged recursively.
+    """
+    import copy
+    merged = copy.deepcopy(base_config)
+    
+    def _merge_dict(base_dict, override_dict):
+        for key, value in override_dict.items():
+            if key in base_dict and isinstance(base_dict[key], dict) and isinstance(value, dict):
+                _merge_dict(base_dict[key], value)
+            else:
+                base_dict[key] = value
+    
+    _merge_dict(merged, override_config)
+    return merged
+
+def apply_overrides(config, overrides):
+    """Apply KEY=VALUE overrides to a (potentially nested) config dict.
+
+    Keys can use dot-notation to address nested fields, e.g. "optimizer.lr".
+    Values are parsed with ast.literal_eval when possible, falling back to
+    strings if parsing fails.
+    """
+    for item in overrides:
+        if '=' not in item:
+            raise ValueError(f"Invalid override '{item}'. Expected KEY=VALUE.")
+        path, value_str = item.split('=', 1)
+        try:
+            value = ast.literal_eval(value_str)
+        except Exception:
+            value = value_str  # treat as plain string
+        keys = path.split('.')
+        d = config
+        for k in keys[:-1]:
+            if k not in d:
+                d[k] = {}
+            d = d[k]
+        d[keys[-1]] = value
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a neural network with specified GPU")
-    parser.add_argument('--gpu', type=int, default=0, help="GPU ID to use for training (default: 0)")
+    # -----------------------------
+    # Command-line interface setup
+    # -----------------------------
+    parser = argparse.ArgumentParser(description="EfficientNet-BW training/inference script")
+    subparsers = parser.add_subparsers(dest='mode', required=True)
+
+    # TRAIN subcommand
+    train_parser = subparsers.add_parser('TRAIN', help='Run Optuna hyper-parameter sweep')
+    train_parser.add_argument('pkl_file', type=str, help='Path to Optuna study pickle file')
+    train_parser.add_argument('--dataset', choices=['tin', 'imgnet'], default='tin')
+    train_parser.add_argument('--gpu', type=int, default=0)
+    train_parser.add_argument('--wandb', nargs='?', const='', default=None, metavar='RUN_NAME',
+                              help='Enable WandB logging; optionally set run name')
+    train_parser.add_argument('--n_trials', type=int, default=20, help='Number of Optuna trials')
+    train_parser.add_argument('-o', '--override', nargs='*', default=[], metavar='KEY=VALUE',
+                              help='Override any default config parameter (dot-notation)')
+
+    # INFER subcommand
+    infer_parser = subparsers.add_parser('INFER', help='Train/evaluate model with chosen trial parameters')
+    infer_parser.add_argument('pkl_file', type=str, help='Path to Optuna study pickle file')
+    infer_parser.add_argument('experiment_id', nargs='?', type=int,
+                              help='Optuna trial ID to use (defaults to best)')
+    infer_parser.add_argument('--dataset', choices=['tin', 'imgnet'], default='tin')
+    infer_parser.add_argument('--gpu', type=int, default=0)
+    infer_parser.add_argument('--wandb', nargs='?', const='', default=None, metavar='RUN_NAME')
+    infer_parser.add_argument('-o', '--override', nargs='*', default=[], metavar='KEY=VALUE')
+
     args = parser.parse_args()
 
-    # change config if needed
+    # -----------------------------
+    # Configuration hierarchy setup
+    # -----------------------------
+    DATA_DIR = DATA_DIRS[args.dataset]
+    TRAIN_DIR = os.path.join(DATA_DIR, 'train')
+    VALID_DIR = os.path.join(DATA_DIR, 'val')
+
+    # Step 1: Start with base defaults
+    config = copy.deepcopy(config_defaults)
     
-    # config_defaults['trainer']['strategy'] = 'ddp_find_unused_parameters_true'       # enable on multi gpu machine
-    L.seed_everything(config_defaults['global_seed'])
-    if HPARAM_OPT=='TRAIN':
-        study_filename='study_xx.pkl'
-        print('='*20,f'HPARAM OPT TRAIN on {study_filename}','='*20)
-        if os.path.exists(study_filename):
-            print('continuing previous study')
-            with open(study_filename, 'rb') as file:
-                study=pickle.load(file)
-        else:
-            print('starting new study')
-            study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=20)      # each trial takes ~2.5hours
-        with open(study_filename, 'wb') as file:
-            pickle.dump(study, file)        
-        # Print the best hyperparameters found
-        print("Best hyperparameters: ", study.best_trial.params)
+    # Step 2: Apply dataset-specific overrides
+    if args.dataset in dataset_configs:
+        config = merge_configs(config, dataset_configs[args.dataset])
+    
+    # Step 3: Set data directory and device
+    config['dataset']['data_dir'] = DATA_DIR
+    config['trainer']['devices'] = [args.gpu]
 
-    elif HPARAM_OPT=='INFER':
-        # study_filename='study.pkl'
-        study_filename='study_bn.pkl'
-        # study_filename='vision/efficient_net/study.pkl' # for debugging
-        # study_filename='study_x.pkl'
-        print('='*20,f'HPARAM OPT INFER on {study_filename}','='*20)
-        if os.path.exists(study_filename):
-            print('loading study')
-            with open(study_filename, 'rb') as file:
-                study=pickle.load(file)
-        else:
-            raise ValueError(f'couldnt find {study_filename}')
-        best_trial_id = study.best_trial.number
-        print(f'best trial: {best_trial_id}')
-        # print(f'best params: {study.best_params}')
-        config = copy.deepcopy(config_defaults)
-        # config.pop('wandb') 
-        # config['wandb']['name'] = 'nbw2_exp_b0_best_modified'
-        selected_trial_id = best_trial_id
-        # selected_trial_id = 71
-        print(f'selected trial: {selected_trial_id}')
-        print(f'selected trial params: {study.trials[selected_trial_id].params}')
-        # config['wandb']['name'] = f'nbw2_exp_b0_adbw_blkdiag_xx_trial_{selected_trial_id}'
-        config['wandb']['name'] = f'nbw2_exp_b0_bn_trial_{selected_trial_id}'
-
-        # set params for selected trial 
-        config['optimizer']['lr'] = study.trials[selected_trial_id].params['learning_rate']
-        config['optimizer']['weight_decay'] = study.trials[selected_trial_id].params['weight_decay']
-        # config['dataset']['batch_size'] = study.best_params['batch_size']
-        config['dataset']['batch_size'] = 32    # override due to performance issues (batch whitening gets extremely slow on larger batch size)
-        config['model']['dropout_rate'] = study.trials[selected_trial_id].params['dropout']
-        config['lr_scheduler']['step_size'] = study.trials[selected_trial_id].params['lr_sched_step_size']
-        config['lr_scheduler']['gamma'] = study.trials[selected_trial_id].params['lr_sched_gamma']
-
-        # config['model']['conv_stem_type'] = study.trials[selected_trial_id].params['conv_stem_type']
-        # config['model']['conv_stem_type'] = 1       # temp experiment to disable bw on all layers except for MBConv blocks
-        # config['model']['mbconv_type'] = study.trials[selected_trial_id].params['mbconv_type']
-        # config['model']['mbconv_type']=0        # for debug - disable batch whitening. use bn .
-
-        # config['model']['batch_whitening_momentum'] = study.trials[selected_trial_id].params['batch_whitening_momentum']
-        # config['model']['batch_whitening_epsilon'] = study.trials[selected_trial_id].params['batch_whitening_epsilon']
-        # config['model']['bw_fix_factor'] = study.trials[selected_trial_id].params['bw_fix_factor']
-        # config['model']['bw_cov_err_threshold'] = study.trials[selected_trial_id].params['bw_cov_err_threshold']
-
-        config['trainer']['max_epochs'] = 50
-        if args.gpu>=0:
-            config['trainer']['devices'] = [args.gpu]
-        config['trainer']['accumulate_grad_batches'] = 4
-        print(config)
-        # run the training
-        main(config)
-
-
+    # Step 4: WandB handling
+    if args.wandb is None:
+        config.pop('wandb', None)
     else:
-        # Run the main function
-        # delete 'wandb' from config    
-        config = copy.deepcopy(config_defaults)
-        config.pop('wandb') 
-        # config['model']['name'] = 'efficientnet-b3'
-        # config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
-        config['optimizer']['opt_name'] = 'AdamW'
-        config['optimizer']['lr'] = 0.001
-        # config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
-        # config['model']['mbconv_type']=0      # 0 to turn batch whitening off
-        # config['model']['conv_stem_type']=1
-        config['model']['mbconv_type']=2      
-        config['model']['conv_stem_type']=1
+        if 'wandb' not in config:
+            config['wandb'] = {'mode': 'online', 'project': 'bw-efcnt_tin'}
+        if args.wandb:  # empty string means keep default name
+            config['wandb']['name'] = args.wandb
 
-        config['trainer']['max_epochs'] = 50
-        if args.gpu>=0:
-            config['trainer']['devices'] = [args.gpu]
-        config['dataset']['batch_size'] = 32
-        # config['trainer']['precision'] = 16
-        config['trainer']['accumulate_grad_batches'] = 4
-        # config['wandb']['name'] = f"nbw2_exp_b0_Itn_fix_off"
-        print(config)
-        main(config)
+    # Step 5: Apply command-line overrides (highest priority)
+    if args.override:
+        apply_overrides(config, args.override)
+
+    L.seed_everything(config['global_seed'])
+
+    # -----------------------------
+    # TRAIN mode
+    # -----------------------------
+    if args.mode == 'TRAIN':
+        # Set global variable for objective function to access
+        import sys
+        sys.modules[__name__]._current_dataset = args.dataset
+        
+        study_filename = args.pkl_file
+        print('='*20, f'HPARAM OPT TRAIN on {study_filename}', '='*20)
+        if os.path.exists(study_filename):
+            with open(study_filename, 'rb') as f:
+                study = pickle.load(f)
+            print('Continuing previous study')
+        else:
+            study = optuna.create_study(direction='minimize')
+            print('Starting new study')
+
+        study.optimize(objective, n_trials=args.n_trials)
+
+        with open(study_filename, 'wb') as f:
+            pickle.dump(study, f)
+
+        print('Best hyperparameters:', study.best_trial.params)
+
+    # -----------------------------
+    # INFER mode
+    # -----------------------------
+    elif args.mode == 'INFER':
+        study_filename = args.pkl_file
+        cfg = copy.deepcopy(config)
+        cfg['trainer']['accumulate_grad_batches'] = 4   
+        print('='*20, f'HPARAM OPT INFER on {study_filename}', '='*20)
+        if os.path.exists(study_filename):
+            with open(study_filename, 'rb') as f:
+                study = pickle.load(f)
+        else:
+            print(f'Study file {study_filename} not found. Using default configuration.')
+            main(cfg)  # Use the already configured config
+            exit(0)
+
+        trial_ids = {t.number for t in study.trials}
+        selected_id = args.experiment_id if args.experiment_id in trial_ids else study.best_trial.number
+        print(f'Selected trial: {selected_id}')
+
+        # Start with the already configured config (base + dataset-specific + CLI overrides)
+        
+        params = study.trials[selected_id].params
+
+        # Apply trial-specific parameters
+        mapping = {
+            ('optimizer', 'lr'): 'learning_rate',
+            ('optimizer', 'weight_decay'): 'weight_decay',
+            ('model', 'dropout_rate'): 'dropout',
+            ('lr_scheduler', 'step_size'): 'lr_sched_step_size',
+            ('lr_scheduler', 'gamma'): 'lr_sched_gamma',
+            ('model', 'conv_stem_type'): 'conv_stem_type',
+            ('model', 'mbconv_type'): 'mbconv_type',
+            ('model', 'batch_whitening_momentum'): 'batch_whitening_momentum',
+            ('model', 'batch_whitening_epsilon'): 'batch_whitening_epsilon',
+            ('model', 'bw_fix_factor'): 'bw_fix_factor',
+            ('model', 'bw_cov_err_threshold'): 'bw_cov_err_threshold',
+        }
+        for (section, key), trial_key in mapping.items():
+            if trial_key in params:
+                cfg[section][key] = params[trial_key]
+        
+        main(cfg)
 

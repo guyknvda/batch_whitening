@@ -324,7 +324,7 @@ def main(config):
 
 config_defaults = {'global_seed':42,
                    'wandb':{'mode':'online',
-                            'project':'efcnt_imgnet',
+                            'project':'bw-efcnt_imgnet',
                             'name':'bw_exp_b0',},
                     'dataset':{ 'data_dir':'/datasets/vision/imagenet/ILSVRC/Data/CLS-LOC',
                                 'batch_size':64,
@@ -343,7 +343,7 @@ if __name__ == "__main__":
     # change config if needed
     config = config_defaults.copy()
     # Run the main function
-    config['wandb']['name'] = 'exp_b0_imgnet'
+    config['wandb']['name'] = 'exp_b0_imgnet_bn'
     # config['model']['name'] = 'efficientnet-b3'
     config['model']['batch_whitening_momentum'] = 0.1   # higher value for faster update of running_mean (more weight on curent batch statistics)
     # config['lr_scheduler']['sched_name'] = None
