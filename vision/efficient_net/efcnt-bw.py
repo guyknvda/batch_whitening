@@ -38,7 +38,7 @@ DATA_DIRS = {
     'imgnet': '/datasets/vision/imagenet/ILSVRC/Data/CLS-LOC/' # to download the dataset : wget http://www.image-net.org/download-images.php
 }
 # Define training and validation data paths
-CHECKPOINT_PATH = "saved_models"
+CHECKPOINT_PATH = "./checkpoints"
 # HPARAM_OPT is deprecated. Use --mode CLI argument instead.
  
 
@@ -123,7 +123,7 @@ def get_training_stats(data_dir,recompute_stats=False):
     return trn_mean, trn_std
 
 
-class TinyImageNetDataModule(L.LightningModule):
+class TinyImageNetDataModule(L.LightningDataModule):
     def __init__(self,config,transform=None):
         super().__init__()
         self.data_dir = config['data_dir']
@@ -175,7 +175,7 @@ class TinyImageNetDataModule(L.LightningModule):
         kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
     
-class ImageNetDataModule(L.LightningModule):
+class ImageNetDataModule(L.LightningDataModule):
     def __init__(self,config,transform=None):
         super().__init__()
         self.data_dir = config['data_dir']
@@ -417,17 +417,48 @@ class CustomWarmUpCallback(L.Callback):
         else:
             pl_module.model.set_bw_cov_warmup(False)
 
+def get_wandb_logger(project, name):
+    # name can be either run ID or run name. if there's a run with this ID, resume it, otherwise start a new run with this name
+    try:
+        # Check if name is a valid run ID 
+        api = wandb.Api()
+        run = api.run(f"{project}/{name}")
+        
+        # Resume existing run
+        return WandbLogger(
+            project=project,
+            id=name,
+            resume="must"  # Force resuming
+        )
+    except Exception:
+        # If run doesn't exist, start new run with name as run name
+        return WandbLogger(
+            project=project,
+            name=name,
+            # log_model="all"  
+        )
 
 def create_trainer(config,callbacks=None):
     # save_name = config['model']['name'] +'_'+ config['wandb']['name']
-    save_name = config['model']['name']
+    save_name = config['model']['name'] + '_' + config['dataset']['name']
     logger = None
     if config.get("wandb",None) is not None:
-        logger = WandbLogger(**config["wandb"])
+        logger = get_wandb_logger(config["wandb"]["project"],config["wandb"]["name"])
     # else:
     #     logger = TensorBoardLogger("lightning_logs", name=save_name)
+    
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_loss',
+        dirpath=os.path.join(CHECKPOINT_PATH, save_name),
+        filename=save_name+'-{epoch:02d}-{val_loss:.2f}',
+        save_top_k=3,  # Save the top 3 models
+        mode='min',
+        save_last=True  # Save the last checkpoint for resuming training
+    )
+    
+    
     if callbacks is None:
-        callbacks= [ModelCheckpoint(save_weights_only=True, mode="max", monitor="val_acc"),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
+        callbacks= [checkpoint_callback,  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
                     LearningRateMonitor("epoch"),       # Log learning rate every epoch
                     CustomWarmUpCallback(5000)
                 ]  
@@ -460,6 +491,11 @@ def create_model(config):
 
 def create_data_module(config):
     # check whether to use imagenet stats or TinyImageNet stats - depending on whether we use a pretrained model or not    
+    if config['dataset']['name'] in DATA_DIRS:
+        config['dataset']['data_dir'] = DATA_DIRS[config['dataset']['name']]
+    else:
+        raise ValueError(f"Unknown dataset: {config['dataset']['name']}")
+
     if config['model'].get('load_pretrained',False):
         trn_mean = [0.485, 0.456, 0.406]
         trn_std = [0.229, 0.224, 0.225]
@@ -478,12 +514,12 @@ def create_data_module(config):
             T.Normalize(mean=trn_mean, std=trn_std)
     ])
 
-    if config['dataset']['data_dir'] == DATA_DIRS['tin']:
+    if config['dataset']['name'] == 'tin':
         dataset_module = TinyImageNetDataModule(config['dataset'],transform=preprocess_transform)
-    elif config['dataset']['data_dir'] == DATA_DIRS['imgnet']:
+    elif config['dataset']['name'] == 'imgnet':
         dataset_module = ImageNetDataModule(config['dataset'],transform=preprocess_transform)
     else:
-        raise ValueError(f"Unknown dataset: {config['dataset']['data_dir']}")
+        raise ValueError(f"Unknown dataset: {config['dataset']['name']}")
     return dataset_module
 
         
@@ -558,31 +594,55 @@ def main(config):
     
     # model = torch.compile(model)
     print(model)
-    trainer.fit(model, datamodule=data_set)
-    model = ImgClsModel.load_from_checkpoint(
-        trainer.checkpoint_callback.best_model_path
-    )  # Load best checkpoint after training
+    if config['train']['ckpt'] is not None:
+        trainer.fit(model, datamodule=data_set, ckpt_path=config['train']['ckpt'])
+    else:
+        trainer.fit(model, datamodule=data_set)
+    
+
+
+    print(f"Training completed. best checkpoint: {trainer.checkpoint_callback.best_model_path}")
+
+
+
+    # Find the checkpoint callback and get the best model path
+    checkpoint_callback = None
+    for callback in trainer.callbacks:
+        if isinstance(callback, ModelCheckpoint):
+            checkpoint_callback = callback
+            break
+    
+    if checkpoint_callback and checkpoint_callback.best_model_path:
+        model = ImgClsModel.load_from_checkpoint(
+            checkpoint_callback.best_model_path
+        )  # Load best checkpoint after training
 
     if config['train']['test']:
-        val_result = trainer.test(model, datamodule=data_set)
-        result = {"test": val_result[0]["test_acc"]}
+        test_result = trainer.test(model, datamodule=data_set)
+        result = {"test": test_result[0]["test_acc"]}
 
     print(f"Test accuracy: {result['test']:.3f}")
+    if trainer.logger is not None and hasattr(trainer.logger, 'experiment') and hasattr(trainer.logger.experiment, 'id'):
+        print(f"wandb run ID: {trainer.logger.experiment.id}")
+    else:
+        print("No wandb logger found")
+
     return model, result
+    # return model, result, trainer.logger.experiment.id if trainer.logger is not None and hasattr(trainer.logger, 'experiment') and hasattr(trainer.logger.experiment, 'id') else None, trainer.checkpoint_callback.best_model_path
 
 
 
 config_defaults = {'global_seed':42,
-                'wandb':{'mode':'online',
-                            'project':'bw-efcnt',
-                            'name':'bw_exp_b0',},
-                    'dataset':{ 'data_dir':'',  # Will be set based on dataset choice
+                'wandb':{'project':'bw-efcnt',
+                            'name':'bw_exp_b0'},
+                    'dataset':{ 'name':'tin', 'data_dir':DATA_DIRS['tin'],  # Will be set based on dataset choice
                                 'batch_size':32,
                                 'image_size':224,
                                 'recompute_stats':False,
                                 'val_split':0.2},
                     'model':{ 'name':'efficientnet-b0', 'load_pretrained':False, 'num_classes':200,'dropout_rate':0.5,'conv_stem_type':1,'mbconv_type':1},
                     'optimizer':{ 'opt_name':'AdamW', 'lr':0.001, 'weight_decay':0.001},
+                    'lr_scheduler':{ 'sched_name':None},  # Default to no scheduler
                     'trainer':{ 'max_epochs':300, 'devices':'auto','strategy':'auto','precision':32},
                     'train':{ 'ckpt':None, 'test':True, 'eval_only':False},
                     }
@@ -773,13 +833,15 @@ if __name__ == "__main__":
                               help='Override any default config parameter (dot-notation)')
 
     # INFER subcommand
+    # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=2 --wandb bw_dbg 
     infer_parser = subparsers.add_parser('INFER', help='Train/evaluate model with chosen trial parameters')
     infer_parser.add_argument('pkl_file', type=str, help='Path to Optuna study pickle file')
-    infer_parser.add_argument('experiment_id', nargs='?', type=int,
+    infer_parser.add_argument('optuna_trial_id', nargs='?', type=int,
                               help='Optuna trial ID to use (defaults to best)')
     infer_parser.add_argument('--dataset', choices=['tin', 'imgnet'], default='tin')
-    infer_parser.add_argument('--gpu', type=int, default=0)
+    infer_parser.add_argument('--ckpt_path', type=str, default=None, help='Path to checkpoint file')
     infer_parser.add_argument('--wandb', nargs='?', const='', default=None, metavar='RUN_NAME')
+    infer_parser.add_argument('--gpu', type=int, default=0)
     infer_parser.add_argument('-o', '--override', nargs='*', default=[], metavar='KEY=VALUE')
 
     args = parser.parse_args()
@@ -787,29 +849,19 @@ if __name__ == "__main__":
     # -----------------------------
     # Configuration hierarchy setup
     # -----------------------------
-    DATA_DIR = DATA_DIRS[args.dataset]
-    TRAIN_DIR = os.path.join(DATA_DIR, 'train')
-    VALID_DIR = os.path.join(DATA_DIR, 'val')
 
     # Step 1: Start with base defaults
     config = copy.deepcopy(config_defaults)
     
     # Step 2: Apply dataset-specific overrides
+
     if args.dataset in dataset_configs:
         config = merge_configs(config, dataset_configs[args.dataset])
+    config['dataset']['name'] = args.dataset
     
-    # Step 3: Set data directory and device
-    config['dataset']['data_dir'] = DATA_DIR
+    # Step 3: Set device
     config['trainer']['devices'] = [args.gpu]
 
-    # Step 4: WandB handling
-    if args.wandb is None:
-        config.pop('wandb', None)
-    else:
-        if 'wandb' not in config:
-            config['wandb'] = {'mode': 'online', 'project': 'bw-efcnt_tin'}
-        if args.wandb:  # empty string means keep default name
-            config['wandb']['name'] = args.wandb
 
     # Step 5: Apply command-line overrides (highest priority)
     if args.override:
@@ -859,7 +911,7 @@ if __name__ == "__main__":
             exit(0)
 
         trial_ids = {t.number for t in study.trials}
-        selected_id = args.experiment_id if args.experiment_id in trial_ids else study.best_trial.number
+        selected_id = args.optuna_trial_id if args.optuna_trial_id in trial_ids else study.best_trial.number
         print(f'Selected trial: {selected_id}')
 
         # Start with the already configured config (base + dataset-specific + CLI overrides)
@@ -883,6 +935,18 @@ if __name__ == "__main__":
         for (section, key), trial_key in mapping.items():
             if trial_key in params:
                 cfg[section][key] = params[trial_key]
+        
+
+        if args.ckpt_path:
+            cfg['train']['ckpt'] = args.ckpt_path
+            
+        else:
+            cfg['train']['ckpt'] = None
+
+        if args.wandb is not None:  
+            cfg['wandb']['name'] = args.wandb
+        else:
+            cfg.pop('wandb', None)
         
         main(cfg)
 
