@@ -56,7 +56,8 @@ def prepare_tinyimagenet_validation_folder(val_img_dir):
         print('Creating subfolders for validation images')
         # The val_annotation txt file comprises 6 tab separated columns of filename, 
         # class label, x and y coordinates, height, and width of bounding boxes
-        val_data = pd.read_csv(f'{VALID_DIR}/val_annotations.txt', 
+        val_annotations_path = os.path.join(os.path.dirname(val_img_dir), 'val_annotations.txt')
+        val_data = pd.read_csv(val_annotations_path, 
                             sep='\t', 
                             header=None, 
                             names=['File', 'Class', 'X', 'Y', 'H', 'W'])
@@ -64,7 +65,7 @@ def prepare_tinyimagenet_validation_folder(val_img_dir):
 
 
         # Open and read val annotations text file
-        fp = open(os.path.join(VALID_DIR, 'val_annotations.txt'), 'r')
+        fp = open(val_annotations_path, 'r')
         data = fp.readlines()
 
         # Create dictionary to store img filename (word 0) and corresponding
@@ -447,9 +448,15 @@ def create_trainer(config,callbacks=None):
     # else:
     #     logger = TensorBoardLogger("lightning_logs", name=save_name)
     
+    # Handle checkpoint directory - keep it consistent for proper resuming
+    checkpoint_dir = os.path.join(CHECKPOINT_PATH, save_name)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
     checkpoint_callback = ModelCheckpoint(
         monitor='val_loss',
-        dirpath=os.path.join(CHECKPOINT_PATH, save_name),
+        dirpath=checkpoint_dir,
         filename=save_name+'-{epoch:02d}-{val_loss:.2f}',
         save_top_k=3,  # Save the top 3 models
         mode='min',
@@ -464,7 +471,7 @@ def create_trainer(config,callbacks=None):
                 ]  
     # Create a PyTorch Lightning trainer with the generation callback
     trainer = L.Trainer(
-        default_root_dir=os.path.join(CHECKPOINT_PATH, save_name),  # Where to save models and tensorboard logs
+        # default_root_dir=checkpoint_dir,  # Where to save models and tensorboard logs
         accelerator="auto",
         logger = logger,
         callbacks=callbacks,
@@ -480,8 +487,10 @@ def create_model(config):
     lr_scheduler_name = config['lr_scheduler'].pop('sched_name')
     # save_name = model_name +'_'+ config['wandb']['name']
     save_name = model_name
-    if config['train']['eval_only'] and config['train']['ckpt'] is not None and os.path.isfile(os.path.join(CHECKPOINT_PATH, save_name + ".ckpt")):
-        print(f"Found pretrained model at {config['train']['ckpt']}, loading...")
+    
+    # Check if we should load from checkpoint
+    if config['train']['ckpt'] is not None and os.path.isfile(config['train']['ckpt']):
+        print(f"Loading model from checkpoint: {config['train']['ckpt']}")
         model = ImgClsModel.load_from_checkpoint(config['train']['ckpt'])
     else:
         model = ImgClsModel(model_name,config['model'],optimizer_name,config['optimizer'],lr_scheduler_name,config['lr_scheduler'],config['dataset'])
@@ -601,10 +610,6 @@ def main(config):
     
 
 
-    print(f"Training completed. best checkpoint: {trainer.checkpoint_callback.best_model_path}")
-
-
-
     # Find the checkpoint callback and get the best model path
     checkpoint_callback = None
     for callback in trainer.callbacks:
@@ -612,17 +617,25 @@ def main(config):
             checkpoint_callback = callback
             break
     
-    if checkpoint_callback and checkpoint_callback.best_model_path:
-        model = ImgClsModel.load_from_checkpoint(
-            checkpoint_callback.best_model_path
-        )  # Load best checkpoint after training
+    if checkpoint_callback:
+        print(f"Training completed. Best checkpoint: {checkpoint_callback.best_model_path}")
+        if checkpoint_callback.best_model_path:
+            model = ImgClsModel.load_from_checkpoint(
+                checkpoint_callback.best_model_path
+            )  # Load best checkpoint after training
+    else:
+        print("Training completed. No checkpoint callback found.")
 
     if config['train']['test']:
         test_result = trainer.test(model, datamodule=data_set)
         result = {"test": test_result[0]["test_acc"]}
 
     print(f"Test accuracy: {result['test']:.3f}")
-    if trainer.logger is not None and hasattr(trainer.logger, 'experiment') and hasattr(trainer.logger.experiment, 'id'):
+    if (trainer.logger is not None and 
+        isinstance(trainer.logger, WandbLogger) and 
+        hasattr(trainer.logger, 'experiment') and 
+        trainer.logger.experiment is not None and
+        hasattr(trainer.logger.experiment, 'id')):
         print(f"wandb run ID: {trainer.logger.experiment.id}")
     else:
         print("No wandb logger found")
@@ -663,8 +676,9 @@ dataset_configs = {
         'model': {'num_classes': 1000, 'load_pretrained': False},
         'dataset': {'image_size': 224},  # ImageNet standard size
         'trainer': {'max_epochs': 100},  # ImageNet typically needs fewer epochs
-        'optimizer': {'lr': 0.001, 'weight_decay': 0.001},  # Lower LR for pretrained
-        'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.0001},
+        'optimizer': {'lr': 0.002, 'weight_decay': 0.001},  # Lower LR for pretrained
+        # 'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':10, 'eta_min':0.000001},
+        'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':1, 'eta_min':0.000001},  # for debugging
     }
 }
 
@@ -833,7 +847,13 @@ if __name__ == "__main__":
                               help='Override any default config parameter (dot-notation)')
 
     # INFER subcommand
-    # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=2 --wandb bw_dbg 
+
+    # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=2 --wandb bw_dbg2 
+    # resume from checkpoint
+    # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=4 --ckpt_path checkpoints/efficientnet-b0_tin//last.ckpt --wandb <run ID>
+    #  imgnet
+    # python efcnt-bw.py INFER dummy.pkl --dataset imgnet -o model.mbconv_type=0 --wandb bw_imgnet_off -o trainer.max_epochs=2
+    # python efcnt-bw.py INFER dummy.pkl --dataset imgnet -o model.mbconv_type=0 --ckpt_path checkpoints/efficientnet-b0_imgnet/last.ckpt --wandb <run ID>
     infer_parser = subparsers.add_parser('INFER', help='Train/evaluate model with chosen trial parameters')
     infer_parser.add_argument('pkl_file', type=str, help='Path to Optuna study pickle file')
     infer_parser.add_argument('optuna_trial_id', nargs='?', type=int,
@@ -875,7 +895,7 @@ if __name__ == "__main__":
     if args.mode == 'TRAIN':
         # Set global variable for objective function to access
         import sys
-        sys.modules[__name__]._current_dataset = args.dataset
+        setattr(sys.modules[__name__], '_current_dataset', args.dataset)
         
         study_filename = args.pkl_file
         print('='*20, f'HPARAM OPT TRAIN on {study_filename}', '='*20)
@@ -905,36 +925,36 @@ if __name__ == "__main__":
         if os.path.exists(study_filename):
             with open(study_filename, 'rb') as f:
                 study = pickle.load(f)
+            trial_ids = {t.number for t in study.trials}
+            selected_id = args.optuna_trial_id if args.optuna_trial_id in trial_ids else study.best_trial.number
+            print(f'Selected trial: {selected_id}')
+
+            # Start with the already configured config (base + dataset-specific + CLI overrides)
+            
+            params = study.trials[selected_id].params
+
+            # Apply trial-specific parameters
+            mapping = {
+                ('optimizer', 'lr'): 'learning_rate',
+                ('optimizer', 'weight_decay'): 'weight_decay',
+                ('model', 'dropout_rate'): 'dropout',
+                ('lr_scheduler', 'step_size'): 'lr_sched_step_size',
+                ('lr_scheduler', 'gamma'): 'lr_sched_gamma',
+                ('model', 'conv_stem_type'): 'conv_stem_type',
+                ('model', 'mbconv_type'): 'mbconv_type',
+                ('model', 'batch_whitening_momentum'): 'batch_whitening_momentum',
+                ('model', 'batch_whitening_epsilon'): 'batch_whitening_epsilon',
+                ('model', 'bw_fix_factor'): 'bw_fix_factor',
+                ('model', 'bw_cov_err_threshold'): 'bw_cov_err_threshold',
+            }
+            for (section, key), trial_key in mapping.items():
+                if trial_key in params:
+                    cfg[section][key] = params[trial_key]
+        
+        
+        
         else:
             print(f'Study file {study_filename} not found. Using default configuration.')
-            main(cfg)  # Use the already configured config
-            exit(0)
-
-        trial_ids = {t.number for t in study.trials}
-        selected_id = args.optuna_trial_id if args.optuna_trial_id in trial_ids else study.best_trial.number
-        print(f'Selected trial: {selected_id}')
-
-        # Start with the already configured config (base + dataset-specific + CLI overrides)
-        
-        params = study.trials[selected_id].params
-
-        # Apply trial-specific parameters
-        mapping = {
-            ('optimizer', 'lr'): 'learning_rate',
-            ('optimizer', 'weight_decay'): 'weight_decay',
-            ('model', 'dropout_rate'): 'dropout',
-            ('lr_scheduler', 'step_size'): 'lr_sched_step_size',
-            ('lr_scheduler', 'gamma'): 'lr_sched_gamma',
-            ('model', 'conv_stem_type'): 'conv_stem_type',
-            ('model', 'mbconv_type'): 'mbconv_type',
-            ('model', 'batch_whitening_momentum'): 'batch_whitening_momentum',
-            ('model', 'batch_whitening_epsilon'): 'batch_whitening_epsilon',
-            ('model', 'bw_fix_factor'): 'bw_fix_factor',
-            ('model', 'bw_cov_err_threshold'): 'bw_cov_err_threshold',
-        }
-        for (section, key), trial_key in mapping.items():
-            if trial_key in params:
-                cfg[section][key] = params[trial_key]
         
 
         if args.ckpt_path:
