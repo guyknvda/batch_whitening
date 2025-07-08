@@ -866,7 +866,7 @@ if __name__ == "__main__":
     # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=4 --ckpt_path checkpoints/efficientnet-b0_tin//last.ckpt --wandb <run ID>
     #  imgnet
     # python efcnt-bw.py INFER dummy.pkl --dataset imgnet -o model.mbconv_type=0 --wandb bw_imgnet_off -o trainer.max_epochs=2
-    # python efcnt-bw.py INFER dummy.pkl --dataset imgnet -o model.mbconv_type=0 --ckpt_path checkpoints/efficientnet-b0_imgnet/last.ckpt --wandb <run ID>
+    # python efcnt-bw.py INFER dummy.pkl --dataset imgnet -o model.mbconv_type=0 --ckpt_path checkpoints/efficientnet-b0_imgnet_off_2/last.ckpt --wandb <run ID>
     infer_parser = subparsers.add_parser('INFER', help='Train/evaluate model with chosen trial parameters')
     infer_parser.add_argument('pkl_file', type=str, help='Path to Optuna study pickle file')
     infer_parser.add_argument('optuna_trial_id', nargs='?', type=int,
