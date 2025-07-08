@@ -419,34 +419,49 @@ class CustomWarmUpCallback(L.Callback):
             pl_module.model.set_bw_cov_warmup(False)
 
 def get_wandb_logger(project, name):
-    # name can be either run ID or run name. if there's a run with this ID, resume it, otherwise start a new run with this name
+    """Get a WandB logger, handling both run IDs and run names intelligently.
+    if there's a run with this ID, resume it, otherwise start a new run with this name
+    Args:
+        project: WandB project name
+        name: Either a run ID or a run name
+    """
     try:
         # Check if name is a valid run ID 
         api = wandb.Api()
         run = api.run(f"{project}/{name}")
+        
+        # Extract run information
+        run_id = run.id
+        run_name = run.name
+        run_state = run.state
+        
+        print(f"Found existing run:")
+        print(f"  ID: {run_id}")
+        print(f"  Name: {run_name}")
         
         # Resume existing run
         return WandbLogger(
             project=project,
             id=name,
             resume="must"  # Force resuming
-        )
-    except Exception:
+        ),run_name
+    except Exception as e:
+        print(f"Run '{name}' not found, creating new run with this name")
         # If run doesn't exist, start new run with name as run name
         return WandbLogger(
             project=project,
             name=name,
             # log_model="all"  
-        )
+        ),name
 
 def create_trainer(config,callbacks=None):
     # save_name = config['model']['name'] +'_'+ config['wandb']['name']
-    save_name = config['model']['name'] + '_' + config['dataset']['name']
     logger = None
     if config.get("wandb",None) is not None:
-        logger = get_wandb_logger(config["wandb"]["project"],config["wandb"]["name"])
+        logger,run_name = get_wandb_logger(config["wandb"]["project"],config["wandb"]["name"])
     # else:
     #     logger = TensorBoardLogger("lightning_logs", name=save_name)
+    save_name = config['model']['name'] + '_' + config['dataset']['name'] + '_' + run_name
     
     # Handle checkpoint directory - keep it consistent for proper resuming
     checkpoint_dir = os.path.join(CHECKPOINT_PATH, save_name)
@@ -485,8 +500,6 @@ def create_model(config):
     model_name = config['model'].pop('name')
     optimizer_name = config['optimizer'].pop('opt_name')
     lr_scheduler_name = config['lr_scheduler'].pop('sched_name')
-    # save_name = model_name +'_'+ config['wandb']['name']
-    save_name = model_name
     
     # Check if we should load from checkpoint
     if config['train']['ckpt'] is not None and os.path.isfile(config['train']['ckpt']):
@@ -676,9 +689,9 @@ dataset_configs = {
         'model': {'num_classes': 1000, 'load_pretrained': False},
         'dataset': {'image_size': 224},  # ImageNet standard size
         'trainer': {'max_epochs': 100},  # ImageNet typically needs fewer epochs
-        'optimizer': {'lr': 0.002, 'weight_decay': 0.001},  # Lower LR for pretrained
-        # 'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':10, 'eta_min':0.000001},
-        'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':1, 'eta_min':0.000001},  # for debugging
+        'optimizer': {'lr': 0.001, 'weight_decay': 0.001},  # Lower LR for pretrained
+        'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.0001},
+        # 'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':1, 'eta_min':0.000001},  # for debugging
     }
 }
 
