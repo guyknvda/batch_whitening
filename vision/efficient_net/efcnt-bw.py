@@ -29,7 +29,8 @@ import wandb
 import optuna
 
 
-
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 # set directories
 
@@ -175,7 +176,7 @@ class TinyImageNetDataModule(L.LightningDataModule):
         '''
         kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
-    
+
 class ImageNetDataModule(L.LightningDataModule):
     def __init__(self,config,transform=None):
         super().__init__()
@@ -454,40 +455,43 @@ def get_wandb_logger(project, name):
             # log_model="all"  
         ),name
 
-def create_trainer(config,callbacks=None):
-    # save_name = config['model']['name'] +'_'+ config['wandb']['name']
+def create_trainer(config,callbacks=None,enable_checkpointing=True):
     logger = None
     if config.get("wandb",None) is not None:
         logger,run_name = get_wandb_logger(config["wandb"]["project"],config["wandb"]["name"])
+    else:
+        run_name = 'no-wandb'
+        
     # else:
     #     logger = TensorBoardLogger("lightning_logs", name=save_name)
     save_name = config['model']['name'] + '_' + config['dataset']['name'] + '_' + run_name
+
+
+    if enable_checkpointing:
+        # Handle checkpoint directory - keep it consistent for proper resuming
+        checkpoint_dir = os.path.join(CHECKPOINT_PATH, save_name)
+
+        # Create directory if it doesn't exist
+        os.makedirs(checkpoint_dir, exist_ok=True)
     
-    # Handle checkpoint directory - keep it consistent for proper resuming
-    checkpoint_dir = os.path.join(CHECKPOINT_PATH, save_name)
-    
-    # Create directory if it doesn't exist
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    
-    checkpoint_callback = ModelCheckpoint(
-        monitor='val_loss',
-        dirpath=checkpoint_dir,
-        filename=save_name+'-{epoch:02d}-{val_loss:.2f}',
-        save_top_k=3,  # Save the top 3 models
-        mode='min',
-        save_last=True  # Save the last checkpoint for resuming training
-    )
+        checkpoint_callback = ModelCheckpoint(
+            monitor='val_loss',
+            dirpath=checkpoint_dir,
+            filename=save_name+'-{epoch:02d}-{val_loss:.2f}',
+            save_top_k=3,  # Save the top 3 models
+            mode='min',
+            save_last=True  # Save the last checkpoint for resuming training
+        )
+        if callbacks is None:
+            callbacks = [checkpoint_callback]
+        else:
+            callbacks.append(checkpoint_callback)
     
     
-    if callbacks is None:
-        callbacks= [checkpoint_callback,  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
-                    LearningRateMonitor("epoch"),       # Log learning rate every epoch
-                    CustomWarmUpCallback(5000)
-                ]  
     # Create a PyTorch Lightning trainer with the generation callback
     trainer = L.Trainer(
         # default_root_dir=checkpoint_dir,  # Where to save models and tensorboard logs
-        accelerator="auto",
+        accelerator="auto",  # Explicitly set to GPU since we're using CUDA devices
         logger = logger,
         callbacks=callbacks,
         **config['trainer']
@@ -592,7 +596,10 @@ def main(config):
     #     wandb.login()
 
     data_set = create_data_module(config)
-    trainer = create_trainer(config)
+
+    callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
+                CustomWarmUpCallback(5000)]  
+    trainer = create_trainer(config, callbacks=callbacks)
 
     if config['lr_scheduler']['sched_name']=='CosineAnnealingWarmRestarts':   # need to compute T_0  
         n_epochs = config['trainer']['max_epochs']
@@ -687,10 +694,11 @@ dataset_configs = {
     'imgnet': {
         'wandb': {'project': 'efcnt_imgnet'},
         'model': {'num_classes': 1000, 'load_pretrained': False},
-        'dataset': {'image_size': 224},  # ImageNet standard size
+        'dataset': {'name':'imgnet', 'data_dir':DATA_DIRS['imgnet']},  # ImageNet standard size
         'trainer': {'max_epochs': 100},  # ImageNet typically needs fewer epochs
         'optimizer': {'lr': 0.001, 'weight_decay': 0.001},  # Lower LR for pretrained
-        'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.0001},
+        # 'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.0001},
+        'lr_scheduler':{ 'sched_name':'StepLR', 'step_size':5, 'gamma':0.98},
         # 'lr_scheduler':{'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':1, 'eta_min':0.000001},  # for debugging
     }
 }
@@ -702,8 +710,12 @@ def set_trial_params(config,trial):
     config['optimizer']['weight_decay'] = trial.suggest_categorical('weight_decay', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2])
     # config['dataset']['batch_size'] = trial.suggest_categorical('batch_size', [32,64,128,256,512])
     config['model']['dropout_rate'] = trial.suggest_float('dropout', 0.2,0.8,step=0.1)
-    config['lr_scheduler']['step_size'] = trial.suggest_int('lr_sched_step_size',5,105,step=10)
-    config['lr_scheduler']['gamma'] = trial.suggest_categorical('lr_sched_gamma',[0.9,0.95,0.99])
+    if config['lr_scheduler']['sched_name'] == 'StepLR':
+        config['lr_scheduler']['step_size'] = trial.suggest_int('lr_sched_step_size',5,105,step=10)
+        config['lr_scheduler']['gamma'] = trial.suggest_categorical('lr_sched_gamma',[0.9,0.95,0.99])
+    elif config['lr_scheduler']['sched_name'] == 'CosineAnnealingWarmRestarts':
+        config['lr_scheduler']['n_cycles'] = trial.suggest_int('n_cycles', 1, 5)
+        config['lr_scheduler']['eta_min'] = trial.suggest_float('eta_min', 1e-6, 1e-3, step=5e-5)
 
     config['model']['conv_stem_type'] = trial.suggest_categorical('conv_stem_type',[1,2])
     config['model']['mbconv_type'] = trial.suggest_categorical('mbconv_type',[1,2,3])
@@ -735,7 +747,7 @@ def objective(trial):
             dataset = sys.modules[__name__]._current_dataset
         else:
             dataset = 'tin'  # default fallback
-            
+        L.seed_everything(42, workers=True)  
         # Reconstruct the config hierarchy
         trial_config = copy.deepcopy(config_defaults)
         if dataset in dataset_configs:
@@ -756,8 +768,8 @@ def objective(trial):
         trial_config['trainer']['enable_checkpointing']=False
         callbacks= [LearningRateMonitor("epoch"),       # Log learning rate every epoch
                     CustomWarmUpCallback(5000)]  
-
-        trainer = create_trainer(trial_config,callbacks)
+        trial_config['trainer']['accumulate_grad_batches'] = 4   
+        trainer = create_trainer(trial_config,callbacks,False)
 
         if trial_config['lr_scheduler']['sched_name']=='CosineAnnealingWarmRestarts':   # need to compute T_0  
             n_epochs = trial_config['trainer']['max_epochs']
@@ -783,8 +795,8 @@ def objective(trial):
         trainer.fit(model, datamodule=data_set)
 
         # Write final metrics
-        final_loss = trainer.callback_metrics['train_loss'].item()
-        result_str = f'\nFinal training loss: {final_loss}\n'
+        final_loss = trainer.callback_metrics['val_loss'].item()
+        result_str = f'\nFinal validation loss: {final_loss}\n'
         f.write(result_str)
         print(result_str)  # Also print to console
 
@@ -849,18 +861,20 @@ if __name__ == "__main__":
     subparsers = parser.add_subparsers(dest='mode', required=True)
 
     # TRAIN subcommand
+    # python efcnt-bw.py TRAIN study_tin_bw_min-val.pkl --dataset tin --n_trials 20 --gpus 0,1 
     train_parser = subparsers.add_parser('TRAIN', help='Run Optuna hyper-parameter sweep')
     train_parser.add_argument('pkl_file', type=str, help='Path to Optuna study pickle file')
     train_parser.add_argument('--dataset', choices=['tin', 'imgnet'], default='tin')
-    train_parser.add_argument('--gpu', type=int, default=0)
+    train_parser.add_argument('--gpus', type=str, default='all',
+                            help='Specify GPUs to use. Examples: "0" (single GPU), "0,1,2" (multi-GPU), "all" (all available GPUs)')
     train_parser.add_argument('--wandb', nargs='?', const='', default=None, metavar='RUN_NAME',
                               help='Enable WandB logging; optionally set run name')
     train_parser.add_argument('--n_trials', type=int, default=20, help='Number of Optuna trials')
+    train_parser.add_argument('--save_every', type=int, default=5, help='Save study every X trials')
     train_parser.add_argument('-o', '--override', nargs='*', default=[], metavar='KEY=VALUE',
                               help='Override any default config parameter (dot-notation)')
 
     # INFER subcommand
-
     # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=2 --wandb bw_dbg2 
     # resume from checkpoint
     # python efcnt-bw.py INFER study.pkl -o trainer.max_epochs=4 --ckpt_path checkpoints/efficientnet-b0_tin//last.ckpt --wandb <run ID>
@@ -874,7 +888,8 @@ if __name__ == "__main__":
     infer_parser.add_argument('--dataset', choices=['tin', 'imgnet'], default='tin')
     infer_parser.add_argument('--ckpt_path', type=str, default=None, help='Path to checkpoint file')
     infer_parser.add_argument('--wandb', nargs='?', const='', default=None, metavar='RUN_NAME')
-    infer_parser.add_argument('--gpu', type=int, default=0)
+    infer_parser.add_argument('--gpus', type=str, default='0',
+                            help='Specify GPUs to use. Examples: "0" (single GPU), "0,1,2" (multi-GPU), "all" (all available GPUs)')
     infer_parser.add_argument('-o', '--override', nargs='*', default=[], metavar='KEY=VALUE')
 
     args = parser.parse_args()
@@ -890,11 +905,20 @@ if __name__ == "__main__":
 
     if args.dataset in dataset_configs:
         config = merge_configs(config, dataset_configs[args.dataset])
-    config['dataset']['name'] = args.dataset
+    # config['dataset']['name'] = args.dataset
     
-    # Step 3: Set device
-    config['trainer']['devices'] = [args.gpu]
-
+    # Step 3: Set device configuration
+    if args.gpus.lower() == 'all':
+        config['trainer']['devices'] = 'auto'
+        config['trainer']['strategy'] = 'ddp'
+    else:
+        # Convert comma-separated string to list of integers
+        gpu_list = [int(gpu.strip()) for gpu in args.gpus.split(',')]
+        config['trainer']['devices'] = gpu_list
+        if len(gpu_list) > 1:
+            config['trainer']['strategy'] = 'ddp'
+        else:
+            config['trainer']['strategy'] = 'auto'
 
     # Step 5: Apply command-line overrides (highest priority)
     if args.override:
@@ -909,7 +933,6 @@ if __name__ == "__main__":
         # Set global variable for objective function to access
         import sys
         setattr(sys.modules[__name__], '_current_dataset', args.dataset)
-        
         study_filename = args.pkl_file
         print('='*20, f'HPARAM OPT TRAIN on {study_filename}', '='*20)
         if os.path.exists(study_filename):
@@ -919,12 +942,15 @@ if __name__ == "__main__":
         else:
             study = optuna.create_study(direction='minimize')
             print('Starting new study')
-
-        study.optimize(objective, n_trials=args.n_trials)
-
-        with open(study_filename, 'wb') as f:
-            pickle.dump(study, f)
-
+        # Save every X trials
+        save_every = args.save_every
+        n_trials = args.n_trials
+        for i in range(0, n_trials, save_every):
+            n_batch = min(save_every, n_trials - i)
+            study.optimize(objective, n_trials=n_batch)
+            with open(study_filename, 'wb') as f:
+                pickle.dump(study, f)
+            print(f"Saved study after {i + n_batch} trials.")
         print('Best hyperparameters:', study.best_trial.params)
 
     # -----------------------------
@@ -969,6 +995,10 @@ if __name__ == "__main__":
         else:
             print(f'Study file {study_filename} not found. Using default configuration.')
         
+        # overridre lr_scheduler``
+        # cfg['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.0001}  # for bw_on with cosine scheduler
+        # cfg['lr_scheduler']={'sched_name':'StepLR', 'step_size':25, 'gamma':0.9}  # for bw_off with step scheduler
+
 
         if args.ckpt_path:
             cfg['train']['ckpt'] = args.ckpt_path
@@ -982,4 +1012,6 @@ if __name__ == "__main__":
             cfg.pop('wandb', None)
         
         main(cfg)
+
+
 

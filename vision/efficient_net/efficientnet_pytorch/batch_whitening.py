@@ -72,7 +72,7 @@ class MyBatchNorm2d(nn.Module):
 def comp_avg_corr(x):
     with torch.no_grad():
         # flatten x from [B,C,H,W] to [C,B*H*W]
-        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).contiguous().detach()
         # compute corr matrix
         corr_matrix = torch.corrcoef(x_f)
         # Extract upper triangular part (excluding diagonal)
@@ -84,7 +84,7 @@ def comp_avg_corr(x):
 def comp_cov_cond(x):
     # flatten x from [B,C,H,W] to [C,B*H*W]
     with torch.no_grad():
-        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).contiguous().detach()
         cov_cond=torch.linalg.cond(torch.cov(x_f))
     return cov_cond
 
@@ -92,7 +92,7 @@ def comp_cov_cond(x):
 
 
 def get_rank(x):
-    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).contiguous().detach()
     return torch.linalg.matrix_rank(x_f)/x.shape[1]
 
 
@@ -281,6 +281,7 @@ def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels
         Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0]).permute(1,0)
     else:
         Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
+    Y = Y.contiguous()
     return Y, running_mean.detach(), running_cov.detach()
 
 
