@@ -7,12 +7,10 @@ https://github.com/openai/gpt-2/blob/master/src/model.py
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
 """
 
-import os
 import math
 import inspect
 from dataclasses import dataclass
-from tkinter import N
-import uuid
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -20,89 +18,241 @@ from torch.nn import functional as F
 
 import sys
 
-from nlp.newton.matrix_inv_sqrt import ComputePower
 sys.path.append('../..')
-#from vision.efficient_net.efficientnet_pytorch.model_bw import BatchWhiteningBlock
-
-#torch.set_default_dtype(torch.float64)
-
-def batch_orthonorm(X, gamma, beta, running_mean=None, running_cov=None, eps=1e-8, momentum=0.1, cov_warmup=1):
-    '''
-    https://github.com/karpathy/llm.c/blob/master/doc/layernorm/layernorm.md
-    X shape = (B, T, C) or (batch, time, channels) or (batch, seq, hidden)
-    '''
-
-    assert len(X.shape) == 3
-    b_newton = False
-
-    # Split the channels to num_groups
-    num_groups = 32
-    group_size = X.shape[2] // num_groups
-    assert X.shape[2] % num_groups == 0
-    n_features = X.shape[2]
-
-    # Calculate the mean and covariance on the channel dimension (axis=2). Here we
-    # need to maintain the shape of X, so that the broadcasting operation can be carried out later,
-    # i.e., shape = (1, 1, n_features_group)
-    mean = X.mean(dim=(0, 1))
-    running_mean = mean  # no running mean
-
-    # Move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
-    # so we simply flatten the last two dims.
-    Xtmp = X.permute(2, 0, 1)
-    Xtmp = Xtmp.reshape(Xtmp.shape[0], -1)
-    I = torch.eye(n_features).to(running_cov.device)
-    #print(f'Xtmp.shape: {Xtmp.shape}')
-
-    # PyTorch cov
-    cov_full = torch.cov(Xtmp, correction=0)
-
-    # Manual cov
-    '''mean = Xtmp.mean(dim=1, keepdim=True)
-    X_centered = Xtmp - mean
-    cov_full = X_centered @ X_centered.T / Xtmp.size(1)'''
 
 
-    cov = torch.zeros_like(cov_full).to(cov_full.device)
+def get_batch_whitening_config(B, T, C, momentum=0.99, threshold=0.01):
+    """Set Batch Whitening configuration based on number of samples
 
-    # Get the block diagonal cov
-    for i in range(0, cov_full.shape[0], group_size):
-        block = cov_full[i:i+group_size, i:i+group_size]  # Extract block
-        cov[i:i+group_size, i:i+group_size] = block  # Assign the block to the block diagonal matrix
+    Args:
+        B (int): Number of sequences in the batch
+        T (int): Number of tokens in a sequence
+        C (int): Number of channels / features per token
+        threshold (float): Threshold for using BatchWhitening.
+            This is the allowed max estimation error.
 
-    cov = cov + I * eps  # TODO: note that the fix to PD is on the cov, instead of the running_cov as done in EfficientNet
+    The mechanism:
+    the effective number of samples is N*H*W/(1-momentum)
+    this number should be >= blk_size*blk_size/2*threshold^2
 
-    try:
-        if b_newton:
-            S = ComputePower(cov.clone(), 2, iter_count=5, ridge_epsilon=1e-10)
-        else:
-            L, _ = torch.linalg.cholesky_ex(cov)
-            if torch.isnan(L).any():
-                raise RuntimeError
-    except Exception as e:
-        eigvals, eigvecs = torch.linalg.eigh(cov)
-        if not (eigvals >= 0).all():
-            print("B: cov Not PSD")
-            print(f'cov.shape: {cov.shape}, I.shape: {I.shape}')
-            print(f'Five smallest eigenvalues: {eigvals[:5]}')
-        raise e
+    we can control blk_size, so we want to find blk_size that satisfies
+    the condition above.
+    so we solve for blk_size in the equation:
+    N*H*W/(1-momentum) >= blk_size*blk_size/2*threshold^2
+    blk_size >= sqrt(2*(B - 1)*T/(1-momentum)*threshold^2)
+    now, if blk_size < 2 , we set blk_size to 1, which means using batchnorm.
+    if blk_size > C we clip it to C which means using the whole channel
+    as a group.
+    in between, we use blk_size.
+    """
+    print('-----------BW triage------------ \n')
+    n_samples = (B - 1) * T / (1-momentum)
 
-    # Center and move the last dim, C, to be first, and then reshape to 2D tensor, keeping the first dim C intact
-    # so we simply flatten the last two dims.
-    X_hat = (X - running_mean.view(1, 1, n_features))
-    X_hat = X_hat.permute(2, 0, 1)
-    permuted_org_shape = X_hat.shape
-    X_hat = X_hat.reshape(X_hat.shape[0], -1)
-
-    if b_newton:
-        Y = S @ X_hat
+    blk_size = int(np.sqrt(2*n_samples*threshold*threshold))
+    print(f'raw block size: {blk_size}')
+    new_mom = momentum
+    if blk_size < 2:
+        blk_size = 1
+    elif blk_size > C:
+        blk_size = C
+        # new_mom=max(0,1-(2*threshold*threshold*N*H*W)/(C*C))
     else:
-        Y = torch.linalg.solve_triangular(L, X_hat, upper=False)
-    Y = Y.reshape(permuted_org_shape)
-    # Permute to the original channel order (move what now is the first channel, C, to be last)
-    Y = Y.permute(1, 2, 0)
+        # Need the block size to be the closest divisor of C
+        target = blk_size
+        divisors = [d for d in range(1, C + 1) if C % d == 0]
+        blk_size = min(divisors, key=lambda d: (abs(d - target), -d))
+    print(
+        f'B, T, C, mu={B,T,C,momentum} '
+        f'--> blk_size = {blk_size}, momentum={new_mom}'
+    )
+    return blk_size, new_mom
 
-    return Y, running_mean.data, running_cov.data
+
+def fix_cov(covmat, fix_factor=0.9):
+    """
+    Stabilize covariance matrix:
+    - Diagonal entries set to 1.0
+    - Off-diagonal entries scaled by fix_factor
+    Supports 2D [D,D] or 3D [B,D,D] or 4D [B,n_groups,D,D]
+    """
+    a = torch.ones_like(covmat) * fix_factor
+
+    if covmat.dim() == 2:
+        # 2D covariance
+        a.fill_diagonal_(1.0)
+    elif covmat.dim() == 3:
+        # 3D: [B,D,D]
+        eye = torch.eye(covmat.size(-1), device=covmat.device)
+        a = a * (1 - eye) + eye
+    elif covmat.dim() == 4:
+        # 4D: [B,n_groups,D,D]
+        eye = torch.eye(
+            covmat.size(-1),
+            device=covmat.device,
+        ).view(1, 1, covmat.size(-1), covmat.size(-1))
+        a = a * (1 - eye) + eye
+    else:
+        raise ValueError(f"Unsupported covmat.dim()={covmat.dim()}")
+
+    return a * covmat
+
+
+def batch_orthonorm(
+    X,
+    gamma=None,
+    beta=None,
+    running_mean=None,
+    running_cov=None,
+    eps=1e-8,
+    momentum=0.1,
+    n_groups=32,
+    cov_warmup=False,
+    fix_factor=0.9,
+    learn_affine=True,
+    bias=True,
+    training_mode=None,
+):
+    """
+    Fully vectorized block whitening for X of shape (B, T, C).
+    No loops. Running stats updated correctly. Whitening is correct.
+    """
+    B, T, C = X.shape
+    device = X.device
+    dtype = X.dtype
+
+    assert C % n_groups == 0, "C must be divisible by n_groups"
+    group_size = C // n_groups
+
+    if training_mode is None:
+        training = torch.is_grad_enabled()
+    else:
+        training = bool(training_mode)
+
+    # --------------------------------------
+    # 1. Initialize running stats correctly
+    # --------------------------------------
+    mean_shape = (1, n_groups, group_size)
+    cov_shape = (B, n_groups, group_size, group_size)
+
+    if running_mean is None:
+        running_mean = torch.zeros(mean_shape, device=device, dtype=dtype)
+
+    if running_cov is None:
+        running_cov = (
+            torch.eye(group_size, device=device, dtype=dtype)
+            .view(1, 1, group_size, group_size)
+            .repeat(1, n_groups, 1, 1)
+        )
+    if training:
+        running_cov = running_cov.expand(cov_shape).clone()
+
+    # --------------------------------------
+    # 1b. Initialize affine parameters if requested
+    # --------------------------------------
+    if learn_affine:
+        if gamma is None:
+            gamma = nn.Parameter(torch.ones(C, device=device, dtype=dtype))
+        if beta is None and bias:
+            beta = nn.Parameter(torch.zeros(C, device=device, dtype=dtype))
+    else:
+        if gamma is None:
+            gamma = torch.ones(C, device=device, dtype=dtype)
+        if beta is None and bias:
+            beta = torch.zeros(C, device=device, dtype=dtype)
+
+    # --------------------------------------
+    # 2. Reshape into groups
+    # --------------------------------------
+    Xg = X.view(B, T, n_groups, group_size)
+
+    if training:
+        if B <= 1:
+            raise ValueError(
+                "Batch size must be greater than 1 during training"
+            )
+        # --------------------------------------
+        # 3. Leave-one-out mean per sequence/group (other sequences only)
+        # --------------------------------------
+        sum_all = Xg.sum(dim=0, keepdim=True)
+        other_count = B - 1
+        mean_other = (sum_all - Xg) / other_count  # (B, T, n_groups, G)
+
+        # --------------------------------------
+        # 4. Leave-one-out centered data for every sequence
+        # --------------------------------------
+        mean_seq = mean_other.mean(dim=1, keepdim=True)  # (B, 1, n_groups, G)
+        Xc_self = Xg - mean_seq  # (B, T, n_groups, G)
+        scale = ((B - 1) / B) ** 0.5
+        Xc_self = Xc_self * scale
+
+        # --------------------------------------
+        # 5. Covariance built only from other sequences (target-specific means)
+        # --------------------------------------
+        X_other_centered = Xg.unsqueeze(0) - mean_other.unsqueeze(1)
+        diag_mask = torch.eye(
+            B, dtype=torch.bool, device=device
+        ).view(B, B, 1, 1, 1)
+        X_other_centered = X_other_centered.masked_fill(diag_mask, 0.0)
+        sample_count = (B - 1) * T
+        cov = torch.einsum(
+            "b s t g c, b s t g d -> b g c d",
+            X_other_centered,
+            X_other_centered,
+        ) / sample_count
+        cov = cov + eps * torch.eye(
+            group_size,
+            device=device,
+            dtype=dtype,
+        ).view(1, 1, group_size, group_size)
+    else:
+        Xc_self = Xg - running_mean.view(1, 1, n_groups, group_size)
+
+    # --------------------------------------
+    # 6. Update running stats
+    # --------------------------------------
+    if training:
+        mean_all = Xg.mean(dim=(0, 1))  # (n_groups, G) over all tokens
+        with torch.no_grad():
+            running_mean.mul_(1 - momentum).add_(
+                momentum * mean_all.view(1, n_groups, group_size)
+            )
+
+            if cov_warmup:
+                diag = torch.eye(group_size, device=device, dtype=dtype)
+                x_var = diag.view(1, 1, group_size, group_size) * cov
+                running_cov.copy_(
+                    (1 - momentum) * x_var + momentum * cov
+                )
+
+            else:
+                running_cov.mul_(1 - momentum).add_(momentum * cov)
+
+    uncorrelated_running_cov = fix_cov(running_cov, fix_factor)
+
+    # --------------------------------------
+    # 7. Cholesky whitening (batched)
+    # --------------------------------------
+    L = torch.linalg.cholesky(uncorrelated_running_cov)  # (B or 1, n_groups, G, G)
+    Xc_perm = Xc_self.permute(0, 2, 3, 1)  # -> (B, n_groups, G, T)
+    Y_perm = torch.linalg.solve_triangular(L, Xc_perm, upper=False)
+
+    # Restore shape (B, T, C)
+    Y = Y_perm.permute(0, 3, 1, 2).reshape(B, T, C)
+
+    # --------------------------------------
+    # 8. Optional affine transform
+    # --------------------------------------
+    if gamma is not None:
+        Y = Y * gamma.view(1, 1, -1)
+    if beta is not None and bias:
+        Y = Y + beta.view(1, 1, -1)
+
+    # Approximate full-batch cov (cov_all) by averaging per-sequence covs;
+    # avoids an extra all-token covariance pass during training.
+    if training:
+        running_cov = running_cov.mean(dim=0, keepdim=True)
+
+    return Y, running_mean.detach(), running_cov.detach(), gamma, beta
 
 
 class BatchWhiteningBlock(nn.Module):
@@ -115,13 +265,19 @@ class BatchWhiteningBlock(nn.Module):
         # initialized to 1 and 0, respectively
         self.n_features=num_features
         self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
-        self.momentum = momentum
         self.eps = eps
-        self.cov_warmup=3
+        self.cov_warmup=True
         self.gamma = nn.Parameter(torch.ones(num_features))
         # The variables that are not model parameters are initialized to 0 and 1
-        self.register_buffer('running_mean', torch.zeros(num_features))
-        self.register_buffer('running_cov', torch.eye(num_features))
+
+        # TODO: how do we know B and T here?
+        group_size, mom = get_batch_whitening_config(B=32, T=64, C=num_features, momentum=1-momentum, threshold=0.1)
+        self.group_size = group_size
+        self.num_groups = num_features // group_size
+        self.momentum = 1.0 - mom
+
+        self.register_buffer('running_mean', torch.zeros(1, self.num_groups, self.group_size))
+        self.register_buffer('running_cov', torch.eye(self.group_size).view(1, 1, self.group_size, self.group_size).repeat(1, self.num_groups, 1, 1))
         self.pre_bias_block=pre_bias_block
 
         self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
@@ -133,9 +289,9 @@ class BatchWhiteningBlock(nn.Module):
             self.running_mean = self.running_mean.to(X.device)
             self.running_cov = self.running_cov.to(X.device)
         # Save the updated running_mean and moving_var
-        Y, self.running_mean, self.running_cov = batch_orthonorm(
+        Y, self.running_mean, self.running_cov, self.gamma, self.beta = batch_orthonorm(
             X, self.gamma, self.beta, self.running_mean,
-            self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup)
+            self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup, bias=False, n_groups=self.num_groups)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
         # add the bias
@@ -293,8 +449,8 @@ class GPT(nn.Module):
 
         # create a list of all BW layers in the model
         self.bw_layers = self._get_bw_layers()
-        self.curr_cov_warmup=3
-        self.set_bw_cov_warmup(1)
+        self.curr_cov_warmup=True
+        self.set_bw_cov_warmup(True)
 
     def _get_bw_layers(self):
         bw_layers = []
