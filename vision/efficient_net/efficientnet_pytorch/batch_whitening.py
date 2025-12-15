@@ -72,7 +72,7 @@ class MyBatchNorm2d(nn.Module):
 def comp_avg_corr(x):
     with torch.no_grad():
         # flatten x from [B,C,H,W] to [C,B*H*W]
-        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).contiguous().detach()
         # compute corr matrix
         corr_matrix = torch.corrcoef(x_f)
         # Extract upper triangular part (excluding diagonal)
@@ -84,7 +84,7 @@ def comp_avg_corr(x):
 def comp_cov_cond(x):
     # flatten x from [B,C,H,W] to [C,B*H*W]
     with torch.no_grad():
-        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+        x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).contiguous().detach()
         cov_cond=torch.linalg.cond(torch.cov(x_f))
     return cov_cond
 
@@ -92,7 +92,7 @@ def comp_cov_cond(x):
 
 
 def get_rank(x):
-    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).detach()
+    x_f= x.permute(1,0,2,3).reshape(x.shape[1],-1).contiguous().detach()
     return torch.linalg.matrix_rank(x_f)/x.shape[1]
 
 
@@ -247,7 +247,7 @@ def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels
         n_channels=n_features
     n_groups=n_features//n_channels
     x = X.transpose(0, 1).contiguous().view(n_groups, n_channels, -1)    
-    cov_I = torch.eye(n_channels).expand(n_groups, n_channels, n_channels).to(running_cov.device)     
+    cov_I = torch.eye(n_channels).expand(n_groups, n_channels, n_channels).clone().to(running_cov.device)     
     _, d, m = x.size()
     if torch.is_grad_enabled():
         mean = x.mean(-1, keepdim=True)
@@ -281,6 +281,7 @@ def cholesky_batch_block_diag(X, running_mean=None, running_cov=None, n_channels
         Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0]).permute(1,0)
     else:
         Y = torch.linalg.solve_triangular(L,xc,upper=False).reshape(X.shape[1],X.shape[0],X.shape[2],X.shape[3]).permute(1,0,2,3)
+    Y = Y.contiguous()
     return Y, running_mean.detach(), running_cov.detach()
 
 
@@ -301,7 +302,7 @@ class BWCholeskyBlock(nn.Module):
         # self.gamma = nn.Parameter(torch.ones(num_features))
         # The variables that are not model parameters are initialized to 0 and 1
         self.register_buffer('running_mean', torch.zeros(self.num_groups, self.num_channels, 1))
-        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(self.num_groups, self.num_channels, self.num_channels))
+        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(self.num_groups, self.num_channels, self.num_channels).clone())
         self.pre_bias_block=pre_bias_block
         self.fix_factor=fix_factor
         self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
@@ -337,7 +338,7 @@ def iter_norm_batch(X, running_mean=None, running_wm=None, T=10, eps=1e-5, momen
         xc = x - mean
         # calculate covariance matrix
         P = [None] * (T + 1)
-        P[0] = torch.eye(d).to(X).expand(g, d, d)
+        P[0] = torch.eye(d).to(X).expand(g, d, d).clone()
         # Sigma = torch.baddbmm(eps, P[0], 1. / m, xc, xc.transpose(1, 2))
         Sigma = torch.baddbmm(P[0], xc, xc.transpose(1, 2), beta=eps, alpha=1. / m)  # =torch.cov(xc,correction=0)
         if apply_fix_cov:
@@ -399,7 +400,7 @@ class IterNormMod(nn.Module):
 
         self.register_buffer('running_mean', torch.zeros(num_groups, num_channels, 1))
         # running whiten matrix
-        self.register_buffer('running_wm', torch.eye(num_channels).expand(num_groups, num_channels, num_channels))
+        self.register_buffer('running_wm', torch.eye(num_channels).expand(num_groups, num_channels, num_channels).clone())
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -452,7 +453,7 @@ class BWItnBlock(nn.Module):
         self.num_channels = num_features
         # The variables that are not model parameters are initialized to 0 and 1
         self.register_buffer('running_mean', torch.zeros(num_groups, self.num_channels, 1))
-        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(num_groups, self.num_channels, self.num_channels))
+        self.register_buffer('running_cov', torch.eye(self.num_channels).expand(num_groups, self.num_channels, self.num_channels).clone())
         self.pre_bias_block=pre_bias_block
 
         # self.gamma = nn.Parameter(torch.ones(num_features))

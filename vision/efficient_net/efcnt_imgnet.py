@@ -105,21 +105,21 @@ class ImageNetDataModule(L.LightningModule):
         '''
         generate the train dataloader
         '''
-        kwargs = {"pin_memory": True, "num_workers": 11}
+        kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True, **kwargs)
     
     def val_dataloader(self):
         '''
         generate the validation dataloader
         '''
-        kwargs = {"pin_memory": True, "num_workers": 11}
+        kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.val_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
     
     def test_dataloader(self):
         '''
         generate the test dataloader
         '''
-        kwargs = {"pin_memory": True, "num_workers": 11}
+        kwargs = {"pin_memory": True, "num_workers": 24}
         return DataLoader(self.test_ds, batch_size=self.batch_size, shuffle=False, **kwargs)
     
 ############################################
@@ -328,7 +328,8 @@ config_defaults = {'global_seed':42,
                             'project':'efcnt_imgnet',
                             'name':'exp_b0',},
                     'dataset':{ 'data_dir':'/datasets/vision/imagenet/ILSVRC/Data/CLS-LOC',
-                                'batch_size':64,
+                                # 'batch_size':64,
+                                'batch_size':32,
                                 'image_size':224,
                                 'recompute_stats':False,
                                 'val_split':0.2},
@@ -344,17 +345,18 @@ if __name__ == "__main__":
     # change config if needed
     config = config_defaults.copy()
     # Run the main function
-    config['wandb']['name'] = 'exp_b0_imgnet'
+    config['wandb']['name'] = 'exp_b0_imgnet_bn'
     # config['model']['name'] = 'efficientnet-b3'
 
     # config['lr_scheduler']['sched_name'] = None
     config['lr_scheduler']={'sched_name':'CosineAnnealingWarmRestarts', 'n_cycles':5, 'eta_min':0.1*config['optimizer']['lr']}
 
-    config['trainer']['max_epochs'] = 300
+    config['trainer']['max_epochs'] = 100
 
-    config['dataset']['batch_size'] = 64
+    config['dataset']['batch_size'] = 32
     # config['trainer']['precision'] = 16
-    config['trainer']['accumulate_grad_batches'] = 1
+    # config['trainer']['accumulate_grad_batches'] = 1
+    config['trainer']['accumulate_grad_batches'] = 4
     print(config)
 
     main(config)
