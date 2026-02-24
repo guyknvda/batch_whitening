@@ -170,14 +170,16 @@ if __name__ == "__main__":
         causality_check("Training (stable final)", *last_stable, False)
 
     # Inference mode (no grad, reuse training stats)
-    X_infer = torch.randn(B, T, C)
-    _, _, Y_infer, X_infer = run_mode(
-        "Inference",
-        X_infer,
-        running_mean.clone(),
-        running_cov.clone(),
-        enable_grad=True,
-        training_mode=False,
-        cov_warmup=False,
-    )
-    causality_check("Inference", Y_infer, X_infer, True)
+    for step in range(1, 5):
+        label = f"Inference step {step}/5"
+        X_infer = torch.randn(B, T, C)
+        _, _, Y_infer, X_infer = run_mode(
+            label,
+            X_infer,
+            running_mean.clone(),
+            running_cov.clone(),
+            enable_grad=True,
+            training_mode=False,
+            cov_warmup=False,
+        )
+        causality_check("Inference", Y_infer, X_infer, True)

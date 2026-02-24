@@ -18,7 +18,7 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-#os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 import time
 import math
@@ -37,8 +37,11 @@ from model import GPTConfig, GPT
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
-cache_base = os.path.expanduser('~/.cache')
-out_dir = os.path.join(cache_base, 'out')
+
+out_dir = 'out'
+# When training GPT2 in CW - reading from cache
+#cache_base = os.path.expanduser('~/.cache')
+#out_dir = os.path.join(cache_base, 'out')
 
 eval_interval = 2000
 log_interval = 1
@@ -88,7 +91,7 @@ config_file = 'config/train_shakespeare_char.py'
 print(f"Overriding config with {config_file}:")
 #################################################
 
-'''
+
 out_dir = 'out-shakespeare-char'
 eval_interval = 250 # keep frequent because we'll overfit
 eval_iters = 200
@@ -119,9 +122,9 @@ min_lr = 1e-4 # learning_rate / 10 usually
 beta2 = 0.99 # make a bit bigger because number of tokens per iter is small
 
 warmup_iters = 100 # not super necessary potentially
+
+
 '''
-
-
 # config for training GPT-2 (124M) down to very nice loss of ~2.85 on 1 node of 8X A100 40GB
 # launch as the following (e.g. in a screen session) and wait ~5 days:
 # $ torchrun --standalone --nproc_per_node=8 train.py config/train_gpt2.py
@@ -147,6 +150,7 @@ log_interval = 10
 
 # weight decay
 weight_decay = 1e-1
+'''
 
 ######################################################
 
@@ -187,8 +191,8 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # poor man's data loader
-data_dir = os.path.join(cache_base, dataset)
-#data_dir = os.path.join('data', dataset)
+#data_dir = os.path.join(cache_base, dataset)  # When training GPT2 in CW - reading from cache
+data_dir = os.path.join('data', dataset)
 def get_batch(split):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122

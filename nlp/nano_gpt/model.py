@@ -165,29 +165,40 @@ def batch_orthonorm(
     # --------------------------------------
     Xg = X.view(B, T, n_groups, group_size)
 
+    # --------------------------------------
+    # Center using running_mean or mixed mean
+    # --------------------------------------
+    if training and B > 1:
+        # Calculate leave-one-out mean (averaged over T)
+        sum_all_flat = Xg.sum(dim=(0, 1), keepdim=True)  # (1, 1, ng, gs)
+        sum_per_seq = Xg.sum(dim=1, keepdim=True)  # (B, 1, ng, gs)
+        count_other = (B - 1) * T
+        mean_other = (sum_all_flat - sum_per_seq) / count_other
+
+        # Mix with running_mean
+        # alpha = 1 - momentum
+        current_mean = (
+            1 - momentum
+        ) * running_mean.view(
+            1, 1, n_groups, group_size
+        ) + momentum * mean_other
+    else:
+        current_mean = running_mean.view(1, 1, n_groups, group_size)
+
+    Xc_self = Xg - current_mean
+
     if training:
         if B <= 1:
             raise ValueError(
                 "Batch size must be greater than 1 during training"
             )
         # --------------------------------------
-        # 3. Leave-one-out mean per sequence/group (other sequences only)
+        # 3. Compute leave-one-out covariance (other sequences only)
         # --------------------------------------
         sum_all = Xg.sum(dim=0, keepdim=True)
         other_count = B - 1
         mean_other = (sum_all - Xg) / other_count  # (B, T, n_groups, G)
 
-        # --------------------------------------
-        # 4. Leave-one-out centered data for every sequence
-        # --------------------------------------
-        mean_seq = mean_other.mean(dim=1, keepdim=True)  # (B, 1, n_groups, G)
-        Xc_self = Xg - mean_seq  # (B, T, n_groups, G)
-        scale = ((B - 1) / B) ** 0.5
-        Xc_self = Xc_self * scale
-
-        # --------------------------------------
-        # 5. Covariance built only from other sequences (target-specific means)
-        # --------------------------------------
         X_other_centered = Xg.unsqueeze(0) - mean_other.unsqueeze(1)
         diag_mask = torch.eye(
             B, dtype=torch.bool, device=device
@@ -204,8 +215,6 @@ def batch_orthonorm(
             device=device,
             dtype=dtype,
         ).view(1, 1, group_size, group_size)
-    else:
-        Xc_self = Xg - running_mean.view(1, 1, n_groups, group_size)
 
     # --------------------------------------
     # 6. Update running stats
@@ -380,14 +389,16 @@ class Block(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.bw_1 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.bw_2 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
+        x = x + self.attn(self.bw_1(self.ln_1(x)))
+        x = x + self.mlp(self.bw_2(self.ln_2(x)))
         return x
 
 class FirstBlock(nn.Module):
