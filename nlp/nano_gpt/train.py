@@ -65,6 +65,14 @@ n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
 batch_whitening = True
+# Debug mode: use mean centering only (no covariance whitening)
+# Options: None (use full BW), "leave_one_out", "running_mean", "calibrated"
+batch_center_mode = None
+# Batch Whitening per-iteration mean calibration:
+# - Before each training iteration, sample random batches and compute their mean.
+# - Use this calibrated mean as the running_mean for the training iteration.
+bw_iter_calibration = True
+bw_iter_calibration_num_batches = 10
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -159,24 +167,36 @@ config = {k: globals()[k] for k in config_keys} # will be useful for logging
 
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
-if ddp:
-    init_process_group(backend=backend)
-    ddp_rank = int(os.environ['RANK'])
-    ddp_local_rank = int(os.environ['LOCAL_RANK'])
-    ddp_world_size = int(os.environ['WORLD_SIZE'])
-    device = f'cuda:{ddp_local_rank}'
-    torch.cuda.set_device(device)
-    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-    seed_offset = ddp_rank # each process gets a different seed
-    # world_size number of processes will be training simultaneously, so we can scale
-    # down the desired gradient accumulation iterations per process proportionally
-    assert gradient_accumulation_steps % ddp_world_size == 0
-    gradient_accumulation_steps //= ddp_world_size
-else:
-    # if not ddp, we are running on a single gpu, and one process
-    master_process = True
+
+# minimal patch to disable DDP for shakespeare run
+if 'out-shakespeare-char' in out_dir:
+    ddp = False                # turn off distributed sync
+    ddp_world_size = 1         # no scaling
+    rank = int(os.environ.get('RANK', 0))          # rank 0..7
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    torch.cuda.set_device(local_rank)
+    device = f"cuda:{local_rank}"
+    master_process = (rank == 0)   # only rank 0 logs
     seed_offset = 0
-    ddp_world_size = 1
+else:
+    if ddp:
+        init_process_group(backend=backend)
+        ddp_rank = int(os.environ['RANK'])
+        ddp_local_rank = int(os.environ['LOCAL_RANK'])
+        ddp_world_size = int(os.environ['WORLD_SIZE'])
+        device = f'cuda:{ddp_local_rank}'
+        torch.cuda.set_device(device)
+        master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+        seed_offset = ddp_rank # each process gets a different seed
+        # world_size number of processes will be training simultaneously, so we can scale
+        # down the desired gradient accumulation iterations per process proportionally
+        assert gradient_accumulation_steps % ddp_world_size == 0
+        gradient_accumulation_steps //= ddp_world_size
+    else:
+        # if not ddp, we are running on a single gpu, and one process
+        master_process = True
+        seed_offset = 0
+        ddp_world_size = 1
 tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
 print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
@@ -225,7 +245,8 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout, batch_whitening=batch_whitening) # start with model_args from command line
+                  bias=bias, vocab_size=None, dropout=dropout, batch_whitening=batch_whitening,
+                  batch_center_mode=batch_center_mode) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -333,6 +354,38 @@ X, Y = get_batch('train') # fetch the very first batch
 t0 = time.time()
 local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
+if hasattr(raw_model, "_orig_mod"):  # torch.compile wrapper
+    raw_model = raw_model._orig_mod
+
+@torch.no_grad()
+def calibrate_bw_iteration_stats():
+    """Calibrate running_mean from random batches before each training iteration."""
+    if not (batch_whitening and bw_iter_calibration):
+        return
+    # During cov_warmup we want the original training-mode BW behavior.
+    if getattr(raw_model, "curr_cov_warmup", False):
+        return
+    was_training = model.training
+    try:
+        # Sample fresh random batches each iteration
+        calib_batches = [get_batch('train')[0] for _ in range(bw_iter_calibration_num_batches)]
+
+        raw_model.bw_calibration_reset()
+        raw_model.bw_calibration_enable(True)
+
+        # Run inference pass to accumulate mean statistics
+        model.eval()
+        for Xc in calib_batches:
+            with ctx:
+                model(Xc)
+    finally:
+        raw_model.bw_calibration_enable(False)
+        raw_model.bw_calibration_commit()  # Only updates running_mean
+        # Disable running stats updates so calibrated mean isn't overwritten during training
+        raw_model.set_bw_update_running_stats(False)
+        if was_training:
+            model.train()
+
 running_mfu = -1.0
 while True:
 
@@ -371,6 +424,10 @@ while True:
 
     if iter_num == eval_interval:
         raw_model.set_bw_cov_warmup(False)
+
+    # Per-iteration BW mean calibration pass (eval/no-grad) over random batches.
+    if batch_whitening and bw_iter_calibration:
+        calibrate_bw_iteration_stats()
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     # and using the GradScaler if data type is float16
