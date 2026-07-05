@@ -229,6 +229,8 @@ def batch_orthonorm(
     bias=True,
     training_mode=None,
     update_running_stats=True,
+    update_running_cov_stats=True,
+    center_mode="running_mean",
 ):
     """
     Fully vectorized block whitening for X of shape (B, T, C).
@@ -293,13 +295,16 @@ def batch_orthonorm(
         count_other = (B - 1) * T
         mean_other = (sum_all_flat - sum_per_seq) / count_other
 
-        # Mix with running_mean
-        # alpha = 1 - momentum
-        current_mean = (
-            1 - momentum
-        ) * running_mean.view(
-            1, 1, n_groups, group_size
-        ) + momentum * mean_other
+        if center_mode == "leave_one_out":
+            current_mean = mean_other
+        elif center_mode in ("running_mean", "calibrated"):
+            current_mean = (
+                1 - momentum
+            ) * running_mean.view(
+                1, 1, n_groups, group_size
+            ) + momentum * mean_other
+        else:
+            raise ValueError(f"Unknown center_mode: {center_mode}")
     else:
         current_mean = running_mean.view(1, 1, n_groups, group_size)
 
@@ -320,10 +325,9 @@ def batch_orthonorm(
         # --------------------------------------
         # 3. Compute leave-one-out covariance (other sequences only)
         # --------------------------------------
-        sum_all = Xg.sum(dim=0, keepdim=True)
-        other_count = B - 1
-        mean_other = (sum_all - Xg) / other_count  # (B, T, n_groups, G)
-
+        # Use the same global leave-one-out mean that centers Xc_self above.
+        # A per-token leave-one-out mean shrinks the covariance and over-scales
+        # the whitened output.
         X_other_centered = Xg.unsqueeze(0) - mean_other.unsqueeze(1)
         diag_mask = torch.eye(
             B, dtype=torch.bool, device=device
@@ -347,22 +351,28 @@ def batch_orthonorm(
     if training:
         with torch.no_grad():
             # Only update running_mean if enabled (disabled when using calibration)
-            if update_running_stats:
+            if center_mode == "leave_one_out":
+                mean_all = Xg.mean(dim=(0, 1))  # (n_groups, G) over all tokens
+                running_mean.copy_(mean_all.view(1, n_groups, group_size))
+            elif update_running_stats:
                 mean_all = Xg.mean(dim=(0, 1))  # (n_groups, G) over all tokens
                 running_mean.mul_(1 - momentum).add_(
                     momentum * mean_all.view(1, n_groups, group_size)
                 )
 
-            # Always update running_cov during training
-            if cov_warmup:
-                diag = torch.eye(group_size, device=device, dtype=dtype)
-                x_var = diag.view(1, 1, group_size, group_size) * cov
-                running_cov.copy_(
-                    (1 - momentum) * x_var + momentum * cov
-                )
+            # Only update running_cov if enabled (disabled when using calibration).
+            if center_mode == "leave_one_out":
+                running_cov.copy_(cov)
+            elif update_running_cov_stats:
+                if cov_warmup:
+                    diag = torch.eye(group_size, device=device, dtype=dtype)
+                    x_var = diag.view(1, 1, group_size, group_size) * cov
+                    running_cov.copy_(
+                        (1 - momentum) * x_var + momentum * cov
+                    )
 
-            else:
-                running_cov.mul_(1 - momentum).add_(momentum * cov)
+                else:
+                    running_cov.mul_(1 - momentum).add_(momentum * cov)
 
     uncorrelated_running_cov = fix_cov(running_cov, fix_factor)
 
@@ -371,6 +381,13 @@ def batch_orthonorm(
     # --------------------------------------
     L = torch.linalg.cholesky(uncorrelated_running_cov)  # (B or 1, n_groups, G, G)
     Xc_perm = Xc_self.permute(0, 2, 3, 1)  # -> (B, n_groups, G, T)
+    # NOTE: torch.linalg.solve_triangular on the MPS backend miscomputes the
+    # result when the triangular factor has a leading batch dim of 1 that must
+    # broadcast against B (the inference path uses a shared (1, n_groups, G, G)
+    # running_cov). Explicitly expanding L to the batch size avoids the broadcast
+    # and is a no-op on CPU/CUDA.
+    if L.shape[0] == 1 and Xc_perm.shape[0] > 1:
+        L = L.expand(Xc_perm.shape[0], -1, -1, -1).contiguous()
     Y_perm = torch.linalg.solve_triangular(L, Xc_perm, upper=False)
 
     # Restore shape (B, T, C)
@@ -453,7 +470,8 @@ class BatchCenterBlock(nn.Module):
         Y, self.running_mean, self.gamma, self.beta = batch_center_only(
             X, self.gamma, self.beta, self.running_mean,
             eps=self.eps, momentum=self.momentum, n_groups=self.num_groups,
-            center_mode=self.center_mode)
+            center_mode=self.center_mode,
+            training_mode=True if self.collect_calib_stats else None)
         
         return Y
 
@@ -462,14 +480,16 @@ class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None):
+    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean"):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
         self.n_features=num_features
         self.n_bias_features = num_features if pre_bias_block is None else num_bias_features
         self.eps = eps
+        self.center_mode = center_mode
         self.cov_warmup=True
+        self.fix_factor = 0.9
         self.gamma = nn.Parameter(torch.ones(num_features))
         # The variables that are not model parameters are initialized to 0 and 1
 
@@ -482,11 +502,13 @@ class BatchWhiteningBlock(nn.Module):
 
         self.register_buffer('running_mean', torch.zeros(1, self.num_groups, self.group_size))
         self.register_buffer('running_cov', torch.eye(self.group_size).view(1, 1, self.group_size, self.group_size).repeat(1, self.num_groups, 1, 1))
-        # Per-iteration calibration buffers for mean only.
+        # Per-iteration calibration buffers for pooled mean/cov statistics.
         self.register_buffer('calib_sum', torch.zeros(1, self.num_groups, self.group_size))
+        self.register_buffer('calib_outer_sum', torch.zeros(1, self.num_groups, self.group_size, self.group_size))
         self.register_buffer('calib_count', torch.zeros((), dtype=torch.long))
         self.collect_calib_stats = False
         self.update_running_stats = True
+        self.update_running_cov_stats = True
         self.pre_bias_block=pre_bias_block
 
         self.beta = nn.Parameter(torch.zeros(self.n_bias_features))
@@ -494,6 +516,7 @@ class BatchWhiteningBlock(nn.Module):
     @torch.no_grad()
     def reset_calibration(self):
         self.calib_sum.zero_()
+        self.calib_outer_sum.zero_()
         self.calib_count.zero_()
 
     @torch.no_grad()
@@ -509,20 +532,33 @@ class BatchWhiteningBlock(nn.Module):
         Xg = X.reshape(B * T, self.num_groups, self.group_size).to(torch.float32)
         # sum_x: (1, n_groups, G)
         sum_x = Xg.sum(dim=0, keepdim=True)
+        # sum_xx: (1, n_groups, G, G)
+        sum_xx = torch.einsum("ngc,ngd->gcd", Xg, Xg).unsqueeze(0)
 
         # Accumulate in buffer dtype (typically fp32)
         self.calib_sum.add_(sum_x.to(self.calib_sum.dtype))
+        self.calib_outer_sum.add_(sum_xx.to(self.calib_outer_sum.dtype))
         self.calib_count.add_(Xg.shape[0])
 
     @torch.no_grad()
     def commit_calibration(self):
-        """Copy calibrated mean into the running_mean buffer."""
+        """Copy calibrated mean/cov into the running buffers."""
         n = int(self.calib_count.item())
         if n <= 0:
             return
         denom = float(n)
         mean = self.calib_sum / denom  # (1, n_groups, G)
+        second_moment = self.calib_outer_sum / denom  # (1, n_groups, G, G)
+        cov = second_moment - mean.unsqueeze(-1) * mean.unsqueeze(-2)
+        cov = 0.5 * (cov + cov.transpose(-1, -2))
+        eye = torch.eye(
+            self.group_size,
+            device=cov.device,
+            dtype=cov.dtype,
+        ).view(1, 1, self.group_size, self.group_size)
+        cov = cov + self.eps * eye
         self.running_mean.copy_(mean.to(self.running_mean.dtype))
+        self.running_cov.copy_(cov.to(self.running_cov.dtype))
 
     def forward(self, X):
         # If X is not on the main memory, copy moving_mean and moving_var to
@@ -531,6 +567,7 @@ class BatchWhiteningBlock(nn.Module):
             self.running_mean = self.running_mean.to(X.device)
             self.running_cov = self.running_cov.to(X.device)
             self.calib_sum = self.calib_sum.to(X.device)
+            self.calib_outer_sum = self.calib_outer_sum.to(X.device)
             self.calib_count = self.calib_count.to(X.device)
 
         if self.collect_calib_stats:
@@ -540,7 +577,11 @@ class BatchWhiteningBlock(nn.Module):
         Y, self.running_mean, self.running_cov, self.gamma, self.beta = batch_orthonorm(
             X, self.gamma, self.beta, self.running_mean,
             self.running_cov, eps=self.eps, momentum=self.momentum,cov_warmup=self.cov_warmup, bias=False, n_groups=self.num_groups,
-            update_running_stats=self.update_running_stats)
+            fix_factor=self.fix_factor,
+            update_running_stats=self.update_running_stats,
+            update_running_cov_stats=self.update_running_cov_stats,
+            center_mode=self.center_mode,
+            training_mode=True if self.collect_calib_stats else None)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
         # add the bias
@@ -625,15 +666,26 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
-def _make_norm_layer(config):
-    """Create normalization layer based on config."""
-    if config.batch_center_mode is not None:
-        # Debug mode: mean centering only, no covariance
+def _make_norm_layer(config, layer_norm_fallback=True):
+    """Create a normalization layer based on config.
+
+    ``layer_norm_fallback`` controls what the ``"layer_norm"`` baseline returns:
+    - ``True`` (default): return a real ``LayerNorm``. Use this where the layer
+      *is* the normalization (e.g. ``ln_f``, or a block that has no separate
+      LayerNorm), so the baseline matches the original nano-GPT.
+    - ``False``: return ``nn.Identity()``. Use this where the layer is an *extra*
+      normalization applied on top of an existing ``LayerNorm`` (e.g. ``bw_2``,
+      used as ``ln_2(bw_2(x))``). Returning a LayerNorm there would stack two
+      LayerNorms (``LN(LN(x))``), which is not the original architecture.
+    """
+    if config.normalization_type == "full_bw":
+        return BatchWhiteningBlock(config.n_embd, center_mode=config.batch_center_mode)
+    elif config.normalization_type == "center_only":
         return BatchCenterBlock(config.n_embd, center_mode=config.batch_center_mode)
-    elif config.batch_whitening:
-        return BatchWhiteningBlock(config.n_embd)  # For leave_one_out use momentum=1.0
+    elif config.normalization_type == "layer_norm":
+        return LayerNorm(config.n_embd, bias=config.bias) if layer_norm_fallback else nn.Identity()
     else:
-        return LayerNorm(config.n_embd, bias=config.bias)
+        raise ValueError(f"Unknown normalization_type: {config.normalization_type}")
 
 
 class Block(nn.Module):
@@ -641,10 +693,10 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.bw_1 = _make_norm_layer(config)
+        self.bw_1 = _make_norm_layer(config, layer_norm_fallback=False)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.bw_2 = _make_norm_layer(config)
+        self.bw_2 = _make_norm_layer(config, layer_norm_fallback=False)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -658,7 +710,7 @@ class FirstBlock(nn.Module):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = BatchWhiteningBlock(config.n_embd) if config.batch_whitening else LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = _make_norm_layer(config)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -675,10 +727,44 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    batch_whitening: bool = False
-    # For debugging: use BatchCenterBlock (mean only, no cov) instead of BatchWhiteningBlock
-    # Options: None (use BW), "leave_one_out", "running_mean", "calibrated"
+    # Which normalization implementation to use:
+    # - "full_bw": BatchWhiteningBlock (mean + covariance whitening)
+    # - "center_only": BatchCenterBlock (mean centering only)
+    # - "layer_norm": standard LayerNorm baseline
+    normalization_type: str = None
+    # Centering/statistics mode for BatchWhiteningBlock or BatchCenterBlock.
+    # Options: "leave_one_out", "running_mean", "calibrated"
     batch_center_mode: str = None
+    # Deprecated compatibility field for older checkpoints/configs.
+    batch_whitening: bool = None
+
+    def __post_init__(self):
+        if self.normalization_type is None:
+            if self.batch_whitening is True:
+                self.normalization_type = (
+                    "center_only" if self.batch_center_mode is not None else "full_bw"
+                )
+            elif self.batch_whitening is False and self.batch_center_mode is not None:
+                self.normalization_type = "center_only"
+            else:
+                self.normalization_type = "layer_norm"
+
+        if self.batch_center_mode is None:
+            self.batch_center_mode = "running_mean"
+
+        valid_normalization_types = {"layer_norm", "center_only", "full_bw"}
+        if self.normalization_type not in valid_normalization_types:
+            raise ValueError(
+                f"normalization_type must be one of {sorted(valid_normalization_types)}, "
+                f"got {self.normalization_type!r}"
+            )
+
+        valid_center_modes = {"leave_one_out", "running_mean", "calibrated"}
+        if self.batch_center_mode not in valid_center_modes:
+            raise ValueError(
+                f"batch_center_mode must be one of {sorted(valid_center_modes)}, "
+                f"got {self.batch_center_mode!r}"
+            )
 
 class GPT(nn.Module):
 
@@ -693,8 +779,8 @@ class GPT(nn.Module):
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),  # h = nn.ModuleList([FirstBlock(config)] + [Block(config) for _ in range(config.n_layer - 1)]),
-            ln_ttt = LayerNorm(config.n_embd, bias=config.bias),
-            ln_f = _make_norm_layer(config),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+            bw_f = _make_norm_layer(config),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
@@ -765,6 +851,12 @@ class GPT(nn.Module):
             if hasattr(layer, 'update_running_stats'):
                 layer.update_running_stats = bool(enabled)
 
+    def set_bw_update_running_cov_stats(self, enabled: bool):
+        for layer in self.bw_layers:
+            # Only BatchWhiteningBlock has update_running_cov_stats
+            if hasattr(layer, 'update_running_cov_stats'):
+                layer.update_running_cov_stats = bool(enabled)
+
     def get_num_params(self, non_embedding=True):
         """
         Return the number of parameters in the model.
@@ -797,8 +889,8 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
             x = block(x)
-        x = self.transformer.ln_ttt(x)
         x = self.transformer.ln_f(x)
+        # x = self.transformer.bw_f(x)  # Remove this
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss

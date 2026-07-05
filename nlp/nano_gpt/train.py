@@ -20,6 +20,8 @@ import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
+import ast
+import sys
 import time
 import math
 import pickle
@@ -64,14 +66,17 @@ n_head = 12
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
-batch_whitening = True
-# Debug mode: use mean centering only (no covariance whitening)
-# Options: None (use full BW), "leave_one_out", "running_mean", "calibrated"
-batch_center_mode = None
-# Batch Whitening per-iteration mean calibration:
-# - Before each training iteration, sample random batches and compute their mean.
-# - Use this calibrated mean as the running_mean for the training iteration.
-bw_iter_calibration = True
+# Normalization implementation:
+# - "layer_norm": original baseline, no BW and no batch centering
+# - "full_bw": mean centering + covariance whitening
+# - "center_only": mean centering only
+normalization_type = "full_bw"
+# Centering/statistics mode: "leave_one_out", "running_mean", or "calibrated"
+batch_center_mode = "leave_one_out"
+print(f"batch_center_mode: {batch_center_mode}")
+# Batch Whitening per-iteration calibration is derived from batch_center_mode below.
+# Set only batch_center_mode; calibrated mode enables this automatically.
+bw_iter_calibration = False
 bw_iter_calibration_num_batches = 10
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
@@ -88,12 +93,15 @@ min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchi
 # DDP settings
 backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
-device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
+device = (
+    'mps' if torch.backends.mps.is_available()
+    else 'cuda' if torch.cuda.is_available()
+    else 'cpu'
+) # examples: 'cpu', 'mps', 'cuda', 'cuda:0', 'cuda:1'
 dtype = 'float32'  # 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 compile = False # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-#exec(open('configurator.py').read()) # overrides from command line or config file
 # overrides from config file
 config_file = 'config/train_shakespeare_char.py'
 print(f"Overriding config with {config_file}:")
@@ -121,7 +129,7 @@ block_size = 256 # context of up to 256 previous characters
 n_layer = 6
 n_head = 6
 n_embd = 384
-dropout = 0.2
+dropout = 0.0  # It was 0.2 but for BW we set it to 0.0
 
 learning_rate = 1e-3 # with baby networks can afford to go a bit higher
 max_iters = 5000
@@ -162,6 +170,29 @@ weight_decay = 1e-1
 
 ######################################################
 
+for arg in sys.argv[1:]:
+    if not arg.startswith("--") or "=" not in arg:
+        raise ValueError(f"Expected config override in --key=value format, got {arg!r}")
+    key, value = arg[2:].split("=", 1)
+    if key not in config_keys:
+        raise ValueError(f"Unknown config key: {key}")
+    try:
+        value = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        pass
+    if not isinstance(value, type(globals()[key])):
+        raise TypeError(
+            f"Expected {key} to be {type(globals()[key]).__name__}, "
+            f"got {type(value).__name__}"
+        )
+    print(f"Overriding {key} = {value}")
+    globals()[key] = value
+
+# Derive calibration from the mode string so experiments use one knob.
+bw_iter_calibration = (
+    normalization_type != "layer_norm" and batch_center_mode == "calibrated"
+)
+
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
@@ -174,8 +205,9 @@ if 'out-shakespeare-char' in out_dir:
     ddp_world_size = 1         # no scaling
     rank = int(os.environ.get('RANK', 0))          # rank 0..7
     local_rank = int(os.environ.get('LOCAL_RANK', 0))
-    torch.cuda.set_device(local_rank)
-    device = f"cuda:{local_rank}"
+    if device.startswith('cuda'):
+        torch.cuda.set_device(local_rank)
+        device = f"cuda:{local_rank}"
     master_process = (rank == 0)   # only rank 0 logs
     seed_offset = 0
 else:
@@ -203,12 +235,14 @@ print(f"tokens per iteration will be: {tokens_per_iter:,}")
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
 torch.manual_seed(1337 + seed_offset)
-torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
-torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
-device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
+if device.startswith('cuda'):
+    torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
+    torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
+device_type = 'cuda' if device.startswith('cuda') else 'mps' if device == 'mps' else 'cpu' # for later use in torch.autocast
 # note: float16 data type will automatically use a GradScaler
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16, 'float64': torch.float64}[dtype]
-ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+use_autocast = device_type == 'cuda' or (device_type == 'mps' and dtype in ('float16', 'bfloat16'))
+ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if use_autocast else nullcontext()
 
 # poor man's data loader
 #data_dir = os.path.join(cache_base, dataset)  # When training GPT2 in CW - reading from cache
@@ -245,7 +279,7 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout, batch_whitening=batch_whitening,
+                  bias=bias, vocab_size=None, dropout=dropout, normalization_type=normalization_type,
                   batch_center_mode=batch_center_mode) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
@@ -294,7 +328,10 @@ if block_size < model.config.block_size:
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+    scaler = torch.amp.GradScaler('cuda', enabled=(device_type == 'cuda' and dtype == 'float16'))
+else:
+    scaler = torch.cuda.amp.GradScaler(enabled=(device_type == 'cuda' and dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -346,7 +383,9 @@ def get_lr(it):
 # logging
 if wandb_log and master_process:
     import wandb
-    wandb.login(key=os.environ["WANDB_API_KEY"], relogin=True, host='https://api.wandb.ai')
+    wandb_api_key = os.environ.get("WANDB_API_KEY")
+    if wandb_api_key:
+        wandb.login(key=wandb_api_key, relogin=True, host='https://api.wandb.ai')
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # training loop
@@ -359,8 +398,8 @@ if hasattr(raw_model, "_orig_mod"):  # torch.compile wrapper
 
 @torch.no_grad()
 def calibrate_bw_iteration_stats():
-    """Calibrate running_mean from random batches before each training iteration."""
-    if not (batch_whitening and bw_iter_calibration):
+    """Calibrate running_mean/running_cov from random batches before each training iteration."""
+    if not bw_iter_calibration:
         return
     # During cov_warmup we want the original training-mode BW behavior.
     if getattr(raw_model, "curr_cov_warmup", False):
@@ -373,16 +412,18 @@ def calibrate_bw_iteration_stats():
         raw_model.bw_calibration_reset()
         raw_model.bw_calibration_enable(True)
 
-        # Run inference pass to accumulate mean statistics
-        model.eval()
+        # Collect stats in train mode so dropout matches the training forward.
+        # @torch.no_grad() keeps calibration from affecting gradients.
+        model.train()
         for Xc in calib_batches:
             with ctx:
                 model(Xc)
     finally:
         raw_model.bw_calibration_enable(False)
-        raw_model.bw_calibration_commit()  # Only updates running_mean
-        # Disable running stats updates so calibrated mean isn't overwritten during training
+        raw_model.bw_calibration_commit()
+        # Disable running stats updates so calibrated stats aren't overwritten during training
         raw_model.set_bw_update_running_stats(False)
+        raw_model.set_bw_update_running_cov_stats(False)
         if was_training:
             model.train()
 
@@ -426,7 +467,7 @@ while True:
         raw_model.set_bw_cov_warmup(False)
 
     # Per-iteration BW mean calibration pass (eval/no-grad) over random batches.
-    if batch_whitening and bw_iter_calibration:
+    if bw_iter_calibration:
         calibrate_bw_iteration_stats()
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size

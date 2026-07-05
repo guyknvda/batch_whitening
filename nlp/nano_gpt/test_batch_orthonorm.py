@@ -1,6 +1,6 @@
 import torch
 
-from nlp.nano_gpt.model import batch_orthonorm, get_batch_whitening_config
+from model import batch_orthonorm, get_batch_whitening_config
 
 
 if __name__ == "__main__":
