@@ -440,6 +440,67 @@ def calibrate_model(model: GPT, args, get_batch):
             model.train()
 
 
+def check_causality(model, config, device, dtype):
+    """Verify whether block0.bw_2 leaks information across token positions.
+
+    A causal BW layer's output at token t0 must NOT depend on other token
+    positions t != t0 within the same sequence (cross-sequence dependence via
+    batch statistics is allowed). The real modes (leave_one_out / running_mean /
+    calibrated) are causal. The 'full' oracle uses whole-batch statistics that
+    include the token's own sequence, so it is EXPECTED to break causality.
+    """
+    bw = model.transformer.h[0].bw_2
+    if not isinstance(bw, BatchWhiteningBlock):
+        print("\n## causality check: skipped (bw_2 is not a BatchWhiteningBlock)")
+        return
+
+    C = config.n_embd
+    B = 4
+    # Ensure B*T > C so the whole-batch covariance is full rank in 'full' mode.
+    T = max(16, (2 * C) // B + 4)
+    torch.manual_seed(1234)
+    x = torch.randn(B, T, C, device=device, dtype=dtype, requires_grad=True)
+
+    was_training = bw.training
+    bw.train()
+    saved_mean = bw.running_mean.clone()
+    saved_cov = bw.running_cov.clone()
+    with torch.enable_grad():
+        y = bw(x)
+    t0 = T // 2
+    grad = torch.autograd.grad(y[0, t0, :].sum(), x)[0]  # (B, T, C)
+    # Restore buffers so the check does not pollute measured stats.
+    bw.running_mean = saved_mean
+    bw.running_cov = saved_cov
+    if not was_training:
+        bw.eval()
+
+    same_seq = grad[0].norm(dim=-1)  # (T,)
+    mask = torch.ones(T, dtype=torch.bool, device=grad.device)
+    mask[t0] = False
+    within_seq_leak = same_seq[mask].max().item()
+    cross_seq = grad[1:].norm(dim=-1).max().item() if B > 1 else 0.0
+    causal = within_seq_leak < 1e-6
+
+    print("\n## causality check (block0.bw_2)")
+    print(f"- within-sequence cross-token leak (should be ~0 if causal): {within_seq_leak:.3e}")
+    print(f"- cross-sequence dependence (batch stats, expected > 0):     {cross_seq:.3e}")
+    if config.batch_center_mode == "full":
+        if not causal:
+            print("  VERDICT: NON-CAUSAL as expected for the 'full' oracle "
+                  "(other tokens in the same sequence affect the output).")
+        else:
+            print("  VERDICT: UNEXPECTED - 'full' oracle should break causality "
+                  "but the within-sequence leak is ~0.")
+    else:
+        if causal:
+            print(f"  VERDICT: CAUSAL - mode '{config.batch_center_mode}' does not leak "
+                  "across token positions within a sequence.")
+        else:
+            print(f"  VERDICT: UNEXPECTED - mode '{config.batch_center_mode}' should be "
+                  f"causal but leaked {within_seq_leak:.3e}.")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Check covariance of bw_2 and ln_2(bw_2(x)) over a few forwards."
@@ -484,7 +545,17 @@ def parse_args():
     parser.add_argument(
         "--batch_center_mode",
         default="leave_one_out",
-        choices=("leave_one_out", "running_mean", "calibrated"),
+        choices=("leave_one_out", "running_mean", "calibrated", "full"),
+        help="'full' is a verification oracle: whole-batch in-sample whitening "
+        "(breaks causality). With --group_size=n_embd and --fix_factor=1.0 it "
+        "should make bw_2 output an exactly-identity covariance.",
+    )
+    parser.add_argument(
+        "--group_size",
+        type=int,
+        default=0,
+        help="BW group size override. 0 = auto (get_batch_whitening_config). "
+        "Set equal to n_embd to disable grouping (single full C x C covariance).",
     )
     parser.add_argument("--mean_tol", type=float, default=0.05)
     parser.add_argument("--diag_mean_tol", type=float, default=0.10)
@@ -539,6 +610,7 @@ def main():
         bias=args.bias,
         normalization_type="full_bw",
         batch_center_mode=args.batch_center_mode,
+        bw_group_size=(args.group_size if args.group_size > 0 else None),
     )
     model = GPT(config).to(device=args.device, dtype=dtype)
     model.train()
@@ -643,6 +715,17 @@ def main():
         + "live nn.Dropout p="
         + str(sorted({m.p for m in model.modules() if isinstance(m, torch.nn.Dropout)}))
         + "\n"
+        + f"- fix_factor={args.fix_factor}, "
+        + "bw group_size/num_groups="
+        + str(sorted({(lyr.group_size, lyr.num_groups) for lyr in model.bw_layers}))
+        + "\n"
+        + (
+            "- ORACLE: center_mode='full' whitens with the whole-batch in-sample "
+            "covariance (breaks causality). With group_size=n_embd and "
+            "fix_factor=1.0, bw_2 should be an exactly-identity covariance.\n"
+            if args.batch_center_mode == "full"
+            else ""
+        )
     )
 
     try:
@@ -678,6 +761,8 @@ def main():
     finally:
         for hook in hooks:
             hook.remove()
+
+    check_causality(model, config, args.device, dtype)
 
 
 if __name__ == "__main__":

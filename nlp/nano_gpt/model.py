@@ -248,6 +248,13 @@ def batch_orthonorm(
     else:
         training = bool(training_mode)
 
+    # Verification-only oracle: whiten with the whole-batch mean+covariance
+    # computed over ALL B*T tokens (including self). This breaks causality by
+    # construction and is NOT meant for training; it exists so that tests can
+    # confirm the whitening produces an exactly-identity output covariance
+    # (with fix_factor=1.0 and no grouping).
+    full_mode = (center_mode == "full")
+
     # --------------------------------------
     # 1. Initialize running stats correctly
     # --------------------------------------
@@ -263,7 +270,7 @@ def batch_orthonorm(
             .view(1, 1, group_size, group_size)
             .repeat(1, n_groups, 1, 1)
         )
-    if training:
+    if training and not full_mode:
         running_cov = running_cov.expand(cov_shape).clone()
 
     # --------------------------------------
@@ -288,7 +295,10 @@ def batch_orthonorm(
     # --------------------------------------
     # Center using running_mean or mixed mean
     # --------------------------------------
-    if training and B > 1:
+    if full_mode:
+        # Whole-batch mean over all B*T tokens (includes self).
+        current_mean = Xg.mean(dim=(0, 1), keepdim=True)  # (1, 1, ng, gs)
+    elif training and B > 1:
         # Calculate leave-one-out mean (averaged over T)
         sum_all_flat = Xg.sum(dim=(0, 1), keepdim=True)  # (1, 1, ng, gs)
         sum_per_seq = Xg.sum(dim=1, keepdim=True)  # (B, 1, ng, gs)
@@ -310,6 +320,20 @@ def batch_orthonorm(
 
     Xc_self = Xg - current_mean
 
+    if full_mode:
+        # Whole-batch covariance over all B*T tokens (single shared matrix).
+        # Whitening with this in-sample covariance yields an exactly-identity
+        # output covariance (up to eps and fix_factor).
+        N = B * T
+        if N <= 1:
+            raise ValueError("center_mode='full' requires B*T > 1")
+        Xc_flat = Xc_self.reshape(N, n_groups, group_size)
+        cov_full = torch.einsum("ngc,ngd->gcd", Xc_flat, Xc_flat) / (N - 1)
+        cov_full = cov_full.unsqueeze(0)  # (1, n_groups, gs, gs)
+        cov_full = cov_full + eps * torch.eye(
+            group_size, device=device, dtype=dtype
+        ).view(1, 1, group_size, group_size)
+
     # Scale to correct for variance bias from leave-one-out component.
     # With mixed mean (1-m)*running + m*mean_other, only the momentum fraction
     # contributes to the bias. When momentum=1, this gives sqrt((B-1)/B).
@@ -317,7 +341,7 @@ def batch_orthonorm(
         scale = (1 - momentum**2 / B) ** 0.5
         Xc_self = Xc_self * scale'''
 
-    if training:
+    if training and not full_mode:
         if B <= 1:
             raise ValueError(
                 "Batch size must be greater than 1 during training"
@@ -348,7 +372,7 @@ def batch_orthonorm(
     # --------------------------------------
     # 6. Update running stats
     # --------------------------------------
-    if training:
+    if training and not full_mode:
         with torch.no_grad():
             # Only update running_mean if enabled (disabled when using calibration)
             if center_mode == "leave_one_out":
@@ -374,7 +398,7 @@ def batch_orthonorm(
                 else:
                     running_cov.mul_(1 - momentum).add_(momentum * cov)
 
-    uncorrelated_running_cov = fix_cov(running_cov, fix_factor)
+    uncorrelated_running_cov = fix_cov(cov_full if full_mode else running_cov, fix_factor)
 
     # --------------------------------------
     # 7. Cholesky whitening (batched)
@@ -403,7 +427,7 @@ def batch_orthonorm(
 
     # Approximate full-batch cov (cov_all) by averaging per-sequence covs;
     # avoids an extra all-token covariance pass during training.
-    if training:
+    if training and not full_mode:
         running_cov = running_cov.mean(dim=0, keepdim=True)
 
     return Y, running_mean.detach(), running_cov.detach(), gamma, beta
@@ -480,7 +504,7 @@ class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean"):
+    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean",group_size=None):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
@@ -494,7 +518,13 @@ class BatchWhiteningBlock(nn.Module):
         # The variables that are not model parameters are initialized to 0 and 1
 
         # TODO: how do we know B and T here?
-        group_size, mom = get_batch_whitening_config(B=32, T=64, C=num_features, momentum=1-momentum, threshold=0.1)
+        derived_group_size, mom = get_batch_whitening_config(B=32, T=64, C=num_features, momentum=1-momentum, threshold=0.1)
+        if group_size is None:
+            group_size = derived_group_size
+        elif num_features % group_size != 0:
+            raise ValueError(
+                f"group_size={group_size} must divide num_features={num_features}"
+            )
         self.group_size = group_size
         self.num_groups = num_features // group_size
         self.momentum = 1.0 - mom
@@ -679,7 +709,11 @@ def _make_norm_layer(config, layer_norm_fallback=True):
       LayerNorms (``LN(LN(x))``), which is not the original architecture.
     """
     if config.normalization_type == "full_bw":
-        return BatchWhiteningBlock(config.n_embd, center_mode=config.batch_center_mode)
+        return BatchWhiteningBlock(
+            config.n_embd,
+            center_mode=config.batch_center_mode,
+            group_size=config.bw_group_size,
+        )
     elif config.normalization_type == "center_only":
         return BatchCenterBlock(config.n_embd, center_mode=config.batch_center_mode)
     elif config.normalization_type == "layer_norm":
@@ -733,8 +767,12 @@ class GPTConfig:
     # - "layer_norm": standard LayerNorm baseline
     normalization_type: str = None
     # Centering/statistics mode for BatchWhiteningBlock or BatchCenterBlock.
-    # Options: "leave_one_out", "running_mean", "calibrated"
+    # Options: "leave_one_out", "running_mean", "calibrated", "full"
     batch_center_mode: str = None
+    # Optional override for the BW group size. None -> derive automatically via
+    # get_batch_whitening_config(). Set to n_embd to disable grouping (a single
+    # full C x C covariance), which is useful for whitening-correctness tests.
+    bw_group_size: int = None
     # Deprecated compatibility field for older checkpoints/configs.
     batch_whitening: bool = None
 
@@ -759,7 +797,8 @@ class GPTConfig:
                 f"got {self.normalization_type!r}"
             )
 
-        valid_center_modes = {"leave_one_out", "running_mean", "calibrated"}
+        # "full" is a verification-only oracle (whole-batch, breaks causality).
+        valid_center_modes = {"leave_one_out", "running_mean", "calibrated", "full"}
         if self.batch_center_mode not in valid_center_modes:
             raise ValueError(
                 f"batch_center_mode must be one of {sorted(valid_center_modes)}, "
