@@ -1,6 +1,8 @@
-# Batch Whitening Modes And Calibration Notes
+# Batch Whitening In nanoGPT: Notes And Reference
 
-This note compares the three centering modes used in the nanoGPT Batch Whitening experiments:
+This document is a reference for the Batch Whitening (BW) normalization work in the nanoGPT experiments. It covers the normalization layers and their affine parameters, how the code selects a normalization path, the three centering modes and their training/inference behavior, calibration and momentum, what "orthonormalized" means after BW and LayerNorm, the verification methodology, and how dropout interacts with BW at inference.
+
+It begins by comparing the three centering modes used in the BW experiments:
 
 - `leave_one_out`
 - `running_mean`
@@ -733,3 +735,121 @@ $$
 $$
 
 So `trace(full G)/C = 1` is expected from LayerNorm. But LayerNorm does not guarantee $G_{ii} \approx 1$ for every individual channel. When the verifier shows a diagonal range like `[0.9438, 1.113]`, that means individual channel energies are close to $1$ but not forced to be exactly $1$. That closeness is evidence that BW/channel balancing mostly survived LayerNorm, not a guarantee from LayerNorm alone.
+
+## Dropout Breaks BW Whitening At Inference
+
+This section explains a train/inference inconsistency that is specific to Batch Whitening: **BW whitens correctly during training but the whitening degrades at inference, and dropout is the cause.**
+
+### Symptom
+
+During training the grouped covariance after `bw_2` is close to identity (diagonal $\approx 1$). At inference (evaluation), the diagonal collapses below $1$ and the effect worsens with depth. The whitening is *over-scaling* the activations.
+
+### Why dropout causes it
+
+BW estimates and stores whitening statistics (`running_cov`, and the calibrated covariance) **during training, with dropout on**. Dropout inflates the variance of the activations it touches (it zeros a fraction $p$ of units and rescales the survivors by $1/(1-p)$). So the stored covariance reflects a *dropout-inflated* distribution.
+
+At inference, dropout is off, so the activations BW sees have *lower* variance than the stored `running_cov`. Whitening divides by (the Cholesky factor of) that too-large covariance, so the output variance comes out **below 1**:
+
+$$
+Y = L^{-1}(X - \mu), \qquad \operatorname{Cov}(Y) = L^{-1}\operatorname{Cov}(X)L^{-\top}
+$$
+
+If $L L^\top = \operatorname{Cov}_{\text{train, dropout on}}$ but $\operatorname{Cov}(X) = \operatorname{Cov}_{\text{eval, dropout off}}$ is smaller, then $\operatorname{Cov}(Y) < I$. This is a **scale/variance** mismatch, not a decorrelation failure: the off-diagonals stay as small as in the healthy case, only the diagonal shrinks.
+
+### Which dropout layers matter
+
+BW reads the residual stream `x`. Only dropouts that write to the residual stream **at full magnitude** create the mismatch. In the current block structure:
+
+```python
+x = x + self.attn(self.ln_1(x))          # attn ends with resid_dropout(c_proj(y))
+x = x + self.mlp(self.ln_2(self.bw_2(x)))  # bw_2 whitens the residual x; mlp ends with mlp_dropout
+```
+
+- `resid_dropout` — end of `CausalSelfAttention.forward`: `self.resid_dropout(self.c_proj(y))`. Drops the attention output *before* it is added to the residual `x`, so it perturbs the **same** block's `bw_2(x)` input.
+- `mlp_dropout` — end of `MLP.forward`: `self.dropout(...)` after `c_proj`. Drops the MLP output *before* it is added to the residual, so it perturbs the **next** block's `bw_2(x)` input.
+- `attn_dropout` — inside `CausalSelfAttention`, on the softmax attention weights (`self.attn_dropout(att)`, or `dropout_p` in the flash path). It only reweights `att @ v`, so it is renormalized/averaged and its variance footprint on the residual stream is negligible.
+
+### Experiments (verifier, `running_mean` mode, real Shakespeare data)
+
+Statistics were accumulated in train mode (burn-in), then the grouped `bw_2` covariance was measured in eval mode. Each cell is `mean|diag-1| / mean token var` at **inference** (ideal is `0 / 1`). Base/embedding dropout was held at `0.0` to isolate the three residual/attention dropouts.
+
+| block | A: all 0.2 | B: all 0.0 | C: resid=0 (attn=mlp=0.2) | D: attn=0.2, mlp=resid=0 |
+|-------|-----------|-----------|---------------------------|--------------------------|
+| 0     | 0.058 / 0.94 | 0.021 / 0.98 | 0.029 / 0.97 ✅ | 0.033 / 0.97 ✅ |
+| 1     | 0.179 / 0.82 | 0.023 / 0.98 | 0.161 / 0.84 ❌ | 0.032 / 0.97 ✅ |
+| 2     | 0.199 / 0.80 | 0.025 / 0.98 | 0.181 / 0.82 ❌ | 0.033 / 0.97 ✅ |
+| 3     | 0.209 / 0.79 | 0.027 / 0.98 | 0.190 / 0.81 ❌ | 0.032 / 0.97 ✅ |
+
+Reading the columns:
+
+- **A (all dropout on)** reproduces the failure: inference diagonal collapses to `0.79`–`0.94`, worse with depth.
+- **B (no dropout)** is the control: inference diagonal $\approx 1$ everywhere. This confirms dropout is the cause.
+- **C (`resid_dropout=0` only)** fixes **only block 0**. Block 0's `bw_2` has no upstream `mlp_dropout`, so removing `resid_dropout` cleans its input. Deeper blocks still read a residual stream that earlier blocks' `mlp_dropout` (still `0.2`) perturbed, so they stay broken.
+- **D (`mlp_dropout=0` and `resid_dropout=0`, `attn_dropout=0.2`)** fixes **all blocks**, even with `attn_dropout` still on. This proves `mlp_dropout` is the deeper-block culprit and `attn_dropout` is harmless.
+
+**Conclusion:** setting `resid_dropout=0` is necessary but not sufficient. The two dropouts that write to the residual stream at full magnitude (`resid_dropout` and `mlp_dropout`) are what break BW at inference; `attn_dropout` does not.
+
+### Does it get worse with more iterations?
+
+No. It **plateaus** with training iterations and compounds only with **depth**. In `running_mean` mode `running_cov` is an EMA that converges to the dropout-on training covariance, so the train↔eval gap is a fixed multiplicative bias, not a divergent one. Increasing burn-in from 40 to 150 iterations (and inference averaging from 3 to 8 forwards) left the deficit essentially unchanged:
+
+| block | burn-in 40 | burn-in 150 |
+|-------|-----------|-------------|
+| 0 | 0.058 / 0.939 | 0.058 / 0.939 |
+| 1 | 0.179 / 0.819 | 0.179 / 0.819 |
+| 2 | 0.199 / 0.799 | 0.202 / 0.797 |
+| 3 | 0.209 / 0.790 | 0.211 / 0.788 |
+
+The only monotonic growth is across blocks (0 → 3), because each layer's residual-stream dropout perturbation accumulates for the next layer's BW.
+
+### Does dropout also interfere *during* training?
+
+A natural follow-up: dropout drops different units on every forward, so it changes the activation statistics BW sees at train time too. Does that break the training-time whitening, or only the eval mismatch above?
+
+This was tested directly by feeding **one fixed input batch** through the model `K = 8` times in train mode (`leave_one_out`, so there is no EMA state to confound the result) and capturing `block0.bw_2`, once with dropout `0.2` and once with dropout off (same weights):
+
+| metric | dropout 0.2 | dropout 0.0 |
+|--------|-------------|-------------|
+| cross-forward output std (same fixed input) | mean `0.39`, max `3.24` | exactly `0.0` |
+| within-forward whitening `mean\|diag-1\|` | `0.003` | `0.002` |
+| within-forward `diag_mean` | `1.003` | `1.001` |
+
+Two distinct conclusions:
+
+1. **Dropout does inject large randomness into the training statistics.** With the *same* input, the `bw_2` output varies across forwards with `std ≈ 0.39` (up to `3.24` at some positions), versus *exactly* `0.0` without dropout (the forward is deterministic). Since the whitened output has unit variance, a cross-forward std of `~0.39` means roughly 40% of the signal at a given position is dropout-induced noise. So dropout genuinely changes what BW estimates and whitens on every step.
+
+2. **But it does not degrade the training-time whitening quality.** Within each forward the output covariance is still essentially identity (`mean|diag-1| ≈ 0.003`, `diag ≈ 1.00`), the same as with dropout off. The reason is that within a single forward BW estimates the covariance from the *same* dropout-perturbed batch it then whitens, so the covariance and the data are mutually consistent (both "dropout-on"). The randomness is present but self-consistent per forward.
+
+This cleanly separates the two regimes. During **training**, dropout adds stochasticity (the intended regularization) but the whitening stays *correct* because the covariance and the data are both dropout-inflated — which is why the train-mode tables show `diag ≈ 1`. At **inference**, dropout turns off, so the data loses the variance inflation while the stored `running_cov` is still the dropout-inflated one, so the whitening over-scales to `diag ≈ (1-p) ≈ 0.8`. The failure is therefore specifically the train↔eval statistics gap, **not** a training-time whitening error.
+
+### How bad is it, really
+
+Moderate, and partly self-mitigating:
+
+- It is a **scale** error (variance $\approx 0.79$–$0.94$, i.e. a 6–21% shrink at depth), **not** a decorrelation failure — off-diagonals are as small as in the no-dropout case.
+- `bw_2` is immediately followed by `ln_2` (`ln_2(bw_2(x))`). LayerNorm re-normalizes each token to unit variance across channels, so a roughly-uniform scale deficit is **largely absorbed** by `ln_2`. What LayerNorm does not remove is the per-channel *spread* of the deficit (e.g. a diagonal range `[0.65, 0.90]`), since LayerNorm only fixes the global per-token scale, not per-channel relative differences.
+- Net: a genuine, systematic train/eval inconsistency worth fixing, but not a catastrophic breakdown. The most direct measure of real impact is eval **loss** with vs without the fix, since `ln_2` sits between BW and the model output.
+
+### Reproducing with the verifier
+
+The verifier exposes per-layer dropout controls (`--attn_dropout`, `--mlp_dropout`, `--resid_dropout`; each falls back to `--dropout`/`--attn_dropout` when unset). Accumulate stats in train mode with burn-in, then compare the train vs inference `bw_2` diagonal:
+
+```bash
+# Experiment A: reproduce the failure (all residual-path dropout on)
+python verify_ln2_bw_orthonorm.py --real_data --dataset=shakespeare_char \
+  --n_layer=4 --n_embd=256 --block_size=128 --batch_size=64 \
+  --batch_center_mode=running_mean --burn_in_iters=40 \
+  --iters=1 --inference_iters=3 --aggregate \
+  --dropout=0.0 --attn_dropout=0.2 --mlp_dropout=0.2 --resid_dropout=0.2
+
+# Experiment D: fix (only the full-magnitude residual writers off)
+python verify_ln2_bw_orthonorm.py ... --attn_dropout=0.2 --mlp_dropout=0.0 --resid_dropout=0.0
+```
+
+Compare the `mean|diag-1=...` and `mean token var=...` fields on the `block{i}.bw_2:` lines under the `## inference aggregate ...` section against the `## train aggregate ...` section.
+
+> **⚠️ IMPORTANT — this problem is specific to the small-model / small-dataset regime.**
+>
+> nanoGPT uses dropout here (`attn_dropout = mlp_dropout = 0.2` in the `shakespeare_char` config) only because it is a tiny model trained on a tiny dataset (`# we expect to overfit on this small dataset` in `train.py`), so dropout is needed as a regularizer. The train/inference mismatch that breaks BW whitening exists **only because dropout is on during training and off at inference**.
+>
+> In large-scale pretraining (e.g. nanoGPT's GPT-2 reproduction on OpenWebText), the default is `dropout = 0.0` (`# for pretraining 0 is good` in `train.py`): with a massive dataset the model does not overfit, so no dropout is required. With `dropout = 0.0` there is no train/eval distribution gap, and BW whitens consistently at inference. In other words, at GPT-2 scale this dropout-induced BW degradation does not arise in the first place.

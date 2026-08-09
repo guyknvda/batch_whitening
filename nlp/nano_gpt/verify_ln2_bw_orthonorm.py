@@ -541,7 +541,25 @@ def parse_args():
     parser.add_argument("--n_head", type=int, default=4)
     parser.add_argument("--n_embd", type=int, default=128)
     parser.add_argument("--vocab_size", type=int, default=1024)
-    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--dropout", type=float, default=0.0, help="Base/embedding dropout.")
+    parser.add_argument(
+        "--attn_dropout",
+        type=float,
+        default=None,
+        help="Dropout on attention softmax weights. None -> falls back to --dropout.",
+    )
+    parser.add_argument(
+        "--mlp_dropout",
+        type=float,
+        default=None,
+        help="Dropout after the MLP (writes to residual, upstream of the next block's BW). None -> --dropout.",
+    )
+    parser.add_argument(
+        "--resid_dropout",
+        type=float,
+        default=None,
+        help="Dropout on the attention output projection (writes to residual, directly upstream of bw_2). None -> --attn_dropout.",
+    )
     parser.add_argument("--bias", action="store_true")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--real_data", action="store_true", help="Use data/<dataset>/*.bin batches like train.py.")
@@ -627,6 +645,9 @@ def main():
         n_head=args.n_head,
         n_embd=args.n_embd,
         dropout=args.dropout,
+        attn_dropout=args.attn_dropout,
+        mlp_dropout=args.mlp_dropout,
+        resid_dropout=args.resid_dropout,
         bias=args.bias,
         normalization_type="full_bw",
         batch_center_mode=args.batch_center_mode,
@@ -742,7 +763,8 @@ def main():
         + f"- burn_in_iters={args.burn_in_iters}\n"
         + f"- train iters={args.iters}, inference iters={args.inference_iters}, aggregate={args.aggregate}\n"
         + f"- real_data={args.real_data}, dataset={args.dataset}, train_like={args.train_like}\n"
-        + f"- dropout: config={config.dropout}, "
+        + f"- dropout: base={config.dropout}, attn={config.attn_dropout}, "
+        + f"mlp={config.mlp_dropout}, resid={config.resid_dropout}, "
         + "live nn.Dropout p="
         + str(sorted({m.p for m in model.modules() if isinstance(m, torch.nn.Dropout)}))
         + "\n"
