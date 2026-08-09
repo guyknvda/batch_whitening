@@ -237,7 +237,12 @@ def compute_bw_internal_tensors(x: torch.Tensor, layer: BatchWhiteningBlock):
     if layer.center_mode == "leave_one_out":
         current_mean = mean_other_flat
     elif layer.center_mode in ("running_mean", "calibrated"):
-        running_mean = layer.running_mean.detach().float().view(1, 1, n_groups, group_size)
+        # Use the running_mean snapshotted *before* the forward updated it (the
+        # constant history the model actually used); fall back to the buffer.
+        prev_mean = getattr(layer, "_debug_prev_mean", None)
+        if prev_mean is None:
+            prev_mean = layer.running_mean
+        running_mean = prev_mean.detach().float().view(1, 1, n_groups, group_size)
         current_mean = (1 - layer.momentum) * running_mean + layer.momentum * mean_other_flat
     else:
         raise ValueError(f"Unknown center_mode: {layer.center_mode}")
@@ -259,14 +264,29 @@ def compute_bw_internal_tensors(x: torch.Tensor, layer: BatchWhiteningBlock):
     ).view(1, 1, group_size, group_size)
 
     if layer.center_mode == "leave_one_out":
+        # Full current-batch covariance (coefficient 1.0), same as the model.
         used_cov = internal_cov
     elif layer.cov_warmup:
+        # Warmup: diagonally-dominant blend of the current-batch covariance
+        # (no history term), mirroring cov_for_whitening during warmup.
         diag = torch.eye(group_size, device=x.device, dtype=internal_cov.dtype)
         used_cov = (
             1 - layer.momentum
         ) * diag.view(1, 1, group_size, group_size) * internal_cov + layer.momentum * internal_cov
     else:
-        used_cov = internal_cov
+        # running_mean / calibrated: (1 - m) * constant history + m * current batch,
+        # mirroring cov_for_whitening in batch_orthonorm. The history is the
+        # running_cov snapshotted *before* the forward updated it (see the
+        # forward_pre_hook in main); fall back to the current buffer otherwise.
+        prev_cov = getattr(layer, "_debug_prev_cov", None)
+        if prev_cov is None:
+            prev_cov = layer.running_cov
+        prev_cov = (
+            prev_cov.detach()
+            .to(dtype=internal_cov.dtype, device=internal_cov.device)
+            .reshape(-1, n_groups, group_size, group_size)
+        )
+        used_cov = (1 - layer.momentum) * prev_cov + layer.momentum * internal_cov
 
     fixed_cov = fix_cov(used_cov, layer.fix_factor)
     l = torch.linalg.cholesky(fixed_cov)
@@ -637,11 +657,22 @@ def main():
 
         return hook
 
+    def save_prev_stats_hook(module, _inputs):
+        # Snapshot the running buffers BEFORE the forward updates them. These are
+        # the *constant history* terms used by current_mean / cov_for_whitening in
+        # batch_orthonorm, so the --debug_bw reconstruction must use the pre-update
+        # values (running_mean is updated with mean_all, running_cov with the
+        # current-batch cov during the forward for running_mean mode).
+        module._debug_prev_mean = module.running_mean.detach().clone()
+        module._debug_prev_cov = module.running_cov.detach().clone()
+
     hooks = []
     for i, block in enumerate(model.transformer.h):
         if isinstance(block.bw_2, BatchWhiteningBlock):
             hooks.append(block.bw_2.register_forward_hook(save_input_output_hook(f"block{i}.bw_2")))
             hooks.append(block.ln_2.register_forward_hook(save_hook(f"block{i}.ln_2_after_bw_2")))
+            if args.debug_bw:
+                hooks.append(block.bw_2.register_forward_pre_hook(save_prev_stats_hook))
 
     def run_forward(split: str):
         idx = get_batch(split)

@@ -65,6 +65,10 @@ n_layer = 12
 n_head = 12
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
+# Per-sublayer dropout overrides. None -> use `dropout` for that sublayer.
+attn_dropout = None  # dropout on the attention softmax weights
+mlp_dropout = None   # dropout inside the MLP
+resid_dropout = None # dropout on the attention output projection (None -> attn_dropout)
 bias = False # do we use bias inside LayerNorm and Linear layers?
 # Normalization implementation:
 # - "layer_norm": original baseline, no BW and no batch centering
@@ -129,7 +133,10 @@ block_size = 256 # context of up to 256 previous characters
 n_layer = 6
 n_head = 6
 n_embd = 384
-dropout = 0.0  # It was 0.2 but for BW we set it to 0.0
+dropout = 0.0  # base/embedding dropout (BW runs with 0.0)
+attn_dropout = 0.2  # 0.2 dropout on the attention softmax weights
+mlp_dropout = 0.2   # keep 0.2 dropout in the MLP
+resid_dropout = 0.0  # no dropout on the attention output projection
 
 learning_rate = 1e-3 # with baby networks can afford to go a bit higher
 max_iters = 5000
@@ -279,7 +286,10 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout, normalization_type=normalization_type,
+                  bias=bias, vocab_size=None, dropout=dropout,
+                  attn_dropout=attn_dropout, mlp_dropout=mlp_dropout,
+                  resid_dropout=resid_dropout,
+                  normalization_type=normalization_type,
                   batch_center_mode=batch_center_mode) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch

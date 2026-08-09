@@ -370,18 +370,49 @@ def batch_orthonorm(
         ).view(1, 1, group_size, group_size)
 
     # --------------------------------------
-    # 6. Update running stats
+    # 6. Build the whitening covariance (with gradient) and update buffers
     # --------------------------------------
+    # The whitening covariance mirrors the mean: a *constant* history term
+    # (running_cov from prior iterations, or the frozen calibrated cov) plus the
+    # *current batch* covariance, which carries the gradient. Reading the
+    # detached running_cov buffer directly (as before) let no gradient flow
+    # through the covariance/whitening transform at all.
     if training and not full_mode:
+        # History from prior iters / calibration: constant (no gradient).
+        cov_history = running_cov.detach().clone()
+
+        if center_mode == "leave_one_out":
+            # Full current-batch covariance, coefficient 1.0 (full gradient).
+            cov_for_whitening = cov
+        elif cov_warmup:
+            # Warmup: diagonally-dominant blend of the current-batch covariance.
+            eye4 = torch.eye(group_size, device=device, dtype=dtype).view(
+                1, 1, group_size, group_size
+            )
+            x_var = eye4 * cov
+            cov_for_whitening = (1 - momentum) * x_var + momentum * cov
+        else:
+            # running_mean / calibrated: constant history + current batch (grad),
+            # current batch weighted by momentum, identical to the mean mix.
+            cov_for_whitening = (1 - momentum) * cov_history + momentum * cov
+
+        # Update running buffers (no gradient) so they act as the constant
+        # history next iter and as the stats used at inference time.
         with torch.no_grad():
+            # Symmetric with the covariance buffer: accumulate the *leave-one-out*
+            # mean averaged over the batch (mirroring how running_cov stores the
+            # batch-averaged leave-one-out covariance). Averaging the per-sequence
+            # leave-one-out means over b is provably identical to the full mean over
+            # all B*T tokens -- the excluded sequence returns in the average -- so
+            # this is numerically the same as the previous Xg.mean(dim=(0,1)) form,
+            # just written to make the mean/cov handling parallel.
+            mean_loo = mean_other.mean(dim=(0, 1))  # (n_groups, G)
             # Only update running_mean if enabled (disabled when using calibration)
             if center_mode == "leave_one_out":
-                mean_all = Xg.mean(dim=(0, 1))  # (n_groups, G) over all tokens
-                running_mean.copy_(mean_all.view(1, n_groups, group_size))
+                running_mean.copy_(mean_loo.view(1, n_groups, group_size))
             elif update_running_stats:
-                mean_all = Xg.mean(dim=(0, 1))  # (n_groups, G) over all tokens
                 running_mean.mul_(1 - momentum).add_(
-                    momentum * mean_all.view(1, n_groups, group_size)
+                    momentum * mean_loo.view(1, n_groups, group_size)
                 )
 
             # Only update running_cov if enabled (disabled when using calibration).
@@ -398,7 +429,12 @@ def batch_orthonorm(
                 else:
                     running_cov.mul_(1 - momentum).add_(momentum * cov)
 
-    uncorrelated_running_cov = fix_cov(cov_full if full_mode else running_cov, fix_factor)
+        cov_for_fix = cov_for_whitening
+    else:
+        # Inference (and the 'full' oracle, handled via cov_full) use the buffer.
+        cov_for_fix = running_cov
+
+    uncorrelated_running_cov = fix_cov(cov_full if full_mode else cov_for_fix, fix_factor)
 
     # --------------------------------------
     # 7. Cholesky whitening (batched)
@@ -533,8 +569,14 @@ class BatchWhiteningBlock(nn.Module):
         self.register_buffer('running_mean', torch.zeros(1, self.num_groups, self.group_size))
         self.register_buffer('running_cov', torch.eye(self.group_size).view(1, 1, self.group_size, self.group_size).repeat(1, self.num_groups, 1, 1))
         # Per-iteration calibration buffers for pooled mean/cov statistics.
-        self.register_buffer('calib_sum', torch.zeros(1, self.num_groups, self.group_size))
-        self.register_buffer('calib_outer_sum', torch.zeros(1, self.num_groups, self.group_size, self.group_size))
+        # We accumulate a numerically stable *centered* co-moment (Welford/Chan)
+        # rather than raw first/second moments. Computing the covariance as
+        # E[XX^T] - mu mu^T subtracts two large near-equal matrices and, in fp32,
+        # loses the small eigenvalues to catastrophic cancellation (producing a
+        # non-PSD matrix that crashes the Cholesky). The centered co-moment
+        # M2 = sum (x-mu)(x-mu)^T is PSD by construction, so cov = M2/n is stable.
+        self.register_buffer('calib_mean', torch.zeros(1, self.num_groups, self.group_size))
+        self.register_buffer('calib_M2', torch.zeros(1, self.num_groups, self.group_size, self.group_size))
         self.register_buffer('calib_count', torch.zeros((), dtype=torch.long))
         self.collect_calib_stats = False
         self.update_running_stats = True
@@ -545,8 +587,8 @@ class BatchWhiteningBlock(nn.Module):
 
     @torch.no_grad()
     def reset_calibration(self):
-        self.calib_sum.zero_()
-        self.calib_outer_sum.zero_()
+        self.calib_mean.zero_()
+        self.calib_M2.zero_()
         self.calib_count.zero_()
 
     @torch.no_grad()
@@ -560,26 +602,41 @@ class BatchWhiteningBlock(nn.Module):
             )
         # (N, n_groups, group_size) in fp32 for numerical stability
         Xg = X.reshape(B * T, self.num_groups, self.group_size).to(torch.float32)
-        # sum_x: (1, n_groups, G)
-        sum_x = Xg.sum(dim=0, keepdim=True)
-        # sum_xx: (1, n_groups, G, G)
-        sum_xx = torch.einsum("ngc,ngd->gcd", Xg, Xg).unsqueeze(0)
+        n_b = Xg.shape[0]
 
-        # Accumulate in buffer dtype (typically fp32)
-        self.calib_sum.add_(sum_x.to(self.calib_sum.dtype))
-        self.calib_outer_sum.add_(sum_xx.to(self.calib_outer_sum.dtype))
-        self.calib_count.add_(Xg.shape[0])
+        # Per-batch centered statistics (stable: no large-minus-large subtraction).
+        mean_b = Xg.mean(dim=0, keepdim=True)  # (1, n_groups, G)
+        Xc = Xg - mean_b
+        m2_b = torch.einsum("ngc,ngd->gcd", Xc, Xc).unsqueeze(0)  # (1, ng, G, G)
+
+        # Chan parallel merge of (count, mean, M2) into the running buffers.
+        n_a = int(self.calib_count.item())
+        if n_a == 0:
+            self.calib_mean.copy_(mean_b.to(self.calib_mean.dtype))
+            self.calib_M2.copy_(m2_b.to(self.calib_M2.dtype))
+        else:
+            n_total = n_a + n_b
+            delta = mean_b - self.calib_mean  # (1, n_groups, G)
+            self.calib_mean.add_((delta * (n_b / n_total)).to(self.calib_mean.dtype))
+            # Cross term (n_a*n_b/n_total) * delta delta^T captures the
+            # between-batch mean spread so M2 stays the exact total co-moment.
+            cross = (delta.unsqueeze(-1) * delta.unsqueeze(-2)) * (n_a * n_b / n_total)
+            self.calib_M2.add_((m2_b + cross).to(self.calib_M2.dtype))
+        self.calib_count.add_(n_b)
 
     @torch.no_grad()
     def commit_calibration(self):
-        """Copy calibrated mean/cov into the running buffers."""
+        """Copy calibrated mean/cov into the running buffers.
+
+        cov = M2 / n is the population covariance built from the centered
+        co-moment, mathematically identical to E[XX^T] - mu mu^T but computed
+        without catastrophic cancellation.
+        """
         n = int(self.calib_count.item())
         if n <= 0:
             return
-        denom = float(n)
-        mean = self.calib_sum / denom  # (1, n_groups, G)
-        second_moment = self.calib_outer_sum / denom  # (1, n_groups, G, G)
-        cov = second_moment - mean.unsqueeze(-1) * mean.unsqueeze(-2)
+        mean = self.calib_mean  # (1, n_groups, G)
+        cov = self.calib_M2 / float(n)  # (1, n_groups, G, G)
         cov = 0.5 * (cov + cov.transpose(-1, -2))
         eye = torch.eye(
             self.group_size,
@@ -596,8 +653,8 @@ class BatchWhiteningBlock(nn.Module):
         if self.running_mean.device != X.device:
             self.running_mean = self.running_mean.to(X.device)
             self.running_cov = self.running_cov.to(X.device)
-            self.calib_sum = self.calib_sum.to(X.device)
-            self.calib_outer_sum = self.calib_outer_sum.to(X.device)
+            self.calib_mean = self.calib_mean.to(X.device)
+            self.calib_M2 = self.calib_M2.to(X.device)
             self.calib_count = self.calib_count.to(X.device)
 
         if self.collect_calib_stats:
@@ -641,11 +698,11 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
+        self.attn_dropout = nn.Dropout(config.attn_dropout)
+        self.resid_dropout = nn.Dropout(config.resid_dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
-        self.dropout = config.dropout
+        self.dropout = config.attn_dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -687,7 +744,7 @@ class MLP(nn.Module):
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-        self.dropout = nn.Dropout(config.dropout)
+        self.dropout = nn.Dropout(config.mlp_dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -760,6 +817,13 @@ class GPTConfig:
     n_head: int = 12
     n_embd: int = 768
     dropout: float = 0.0
+    # Per-sublayer dropout overrides. None -> fall back to `dropout`.
+    # Lets you e.g. keep MLP dropout while disabling attention dropout.
+    attn_dropout: float = None
+    mlp_dropout: float = None
+    # Dropout on the attention output projection (residual add).
+    # None -> fall back to `attn_dropout`.
+    resid_dropout: float = None
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     # Which normalization implementation to use:
     # - "full_bw": BatchWhiteningBlock (mean + covariance whitening)
@@ -777,6 +841,14 @@ class GPTConfig:
     batch_whitening: bool = None
 
     def __post_init__(self):
+        # Resolve per-sublayer dropout overrides against the general `dropout`.
+        if self.attn_dropout is None:
+            self.attn_dropout = self.dropout
+        if self.mlp_dropout is None:
+            self.mlp_dropout = self.dropout
+        if self.resid_dropout is None:
+            self.resid_dropout = self.attn_dropout
+
         if self.normalization_type is None:
             if self.batch_whitening is True:
                 self.normalization_type = (
