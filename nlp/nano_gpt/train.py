@@ -5,8 +5,14 @@ and also in a larger training run with distributed data parallel (ddp).
 To run on a single GPU, example:
 $ python train.py --batch_size=32 --compile=False
 
-To run with DDP on 4 gpus on 1 node, example:
-$ torchrun --standalone --nproc_per_node=4 train.py
+To submit nanoGPT to Slurm from the repository root, example:
+$ sbatch sbatch_nanogpt.sh
+
+To submit GPT-2 to Slurm from the repository root, example:
+$ sbatch sbatch_gpt2.sh
+
+To run GPT-2 with DDP on 8 gpus on 1 node, example:
+$ torchrun --standalone --nproc_per_node=8 train.py --config_name=gpt2
 
 To run with DDP on 4 gpus across 2 nodes, example:
 - Run on the first (master) node with example IP 123.456.123.456:
@@ -37,145 +43,155 @@ from model import GPTConfig, GPT
 #torch.set_default_dtype(torch.float64)
 
 # -----------------------------------------------------------------------------
-# default config values designed to train a gpt2 (124M) on OpenWebText
-# I/O
+# config
+#
+# Default is the small nanoGPT/Shakespeare run. Use --config_name=gpt2 for
+# GPT-2 124M on OpenWebText. GPT-2 in CW reads data/checkpoints from ~/.cache.
+config_name = 'nanogpt'  # 'nanogpt' or 'gpt2'
+cache_base = os.path.expanduser('~/.cache')
 
+# shared defaults
 out_dir = 'out'
-# When training GPT2 in CW - reading from cache
-#cache_base = os.path.expanduser('~/.cache')
-#out_dir = os.path.join(cache_base, 'out')
-
+data_root = 'data'
 eval_interval = 2000
 log_interval = 1
 eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
-# wandb logging
 wandb_log = False # disabled by default
 wandb_project = 'owt'
 wandb_run_name = 'gpt2' # 'run' + str(time.time())
-# data
 dataset = 'openwebtext'
 gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
-# model
 n_layer = 12
 n_head = 12
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
-# Per-sublayer dropout overrides. None -> use `dropout` for that sublayer.
-attn_dropout = None  # dropout on the attention softmax weights
-mlp_dropout = None   # dropout inside the MLP
-resid_dropout = None # dropout on the attention output projection (None -> attn_dropout)
+attn_dropout = None  # None -> use `dropout`
+mlp_dropout = None   # None -> use `dropout`
+resid_dropout = None # None -> use `attn_dropout`
 bias = False # do we use bias inside LayerNorm and Linear layers?
-# Normalization implementation:
-# - "layer_norm": original baseline, no BW and no batch centering
-# - "full_bw": mean centering + covariance whitening
-# - "center_only": mean centering only
-normalization_type = "full_bw"
-# Centering/statistics mode: "leave_one_out", "running_mean", or "calibrated"
-batch_center_mode = "leave_one_out"
-print(f"batch_center_mode: {batch_center_mode}")
-# Batch Whitening per-iteration calibration is derived from batch_center_mode below.
-# Set only batch_center_mode; calibrated mode enables this automatically.
+normalization_type = "full_bw" # "layer_norm", "full_bw", or "center_only"
+batch_center_mode = "calibrated" # "leave_one_out", "running_mean", or "calibrated"
 bw_iter_calibration = False
 bw_iter_calibration_num_batches = 10
-# adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0 # clip gradients at this value, or disable if == 0.0
-# learning rate decay settings
 decay_lr = True # whether to decay the learning rate
 warmup_iters = 2000 # how many steps to warm up for
 lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-# DDP settings
 backend = 'nccl' # 'nccl', 'gloo', etc.
-# system
 device = (
     'mps' if torch.backends.mps.is_available()
     else 'cuda' if torch.cuda.is_available()
     else 'cpu'
 ) # examples: 'cpu', 'mps', 'cuda', 'cuda:0', 'cuda:1'
-dtype = 'float32'  # 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+dtype = 'float32'  # 'float32', 'bfloat16', 'float16', or 'float64'
 compile = False # use PyTorch 2.0 to compile the model to be faster
-# -----------------------------------------------------------------------------
+
+
+def _cli_value(name, default):
+    prefix = f"--{name}="
+    for arg in sys.argv[1:]:
+        if arg.startswith(prefix):
+            return arg.split("=", 1)[1]
+    return default
+
+
+def apply_nanogpt_config():
+    global out_dir, data_root, eval_interval, eval_iters, log_interval
+    global always_save_checkpoint, wandb_log, wandb_project, wandb_run_name
+    global dataset, gradient_accumulation_steps, batch_size, block_size
+    global n_layer, n_head, n_embd, dropout, attn_dropout, mlp_dropout
+    global resid_dropout, learning_rate, max_iters, lr_decay_iters, min_lr
+    global beta2, warmup_iters
+
+    out_dir = 'out-shakespeare-char'
+    data_root = 'data'
+    eval_interval = 250
+    eval_iters = 200
+    log_interval = 10
+    always_save_checkpoint = False
+    wandb_log = True
+    wandb_project = 'shakespeare-char'
+    wandb_run_name = 'mini-gpt'
+    dataset = 'shakespeare_char'
+    gradient_accumulation_steps = 1
+    batch_size = 64
+    block_size = 256
+    n_layer = 6
+    n_head = 6
+    n_embd = 384
+    dropout = 0.0
+    attn_dropout = 0.0  # was 0.2
+    mlp_dropout = 0.0  # was 0.2
+    resid_dropout = 0.0  # was 0.2
+    learning_rate = 1e-3
+    max_iters = 5000
+    lr_decay_iters = 5000
+    min_lr = 1e-4
+    beta2 = 0.99
+    warmup_iters = 100
+
+
+def apply_gpt2_config():
+    global out_dir, data_root, eval_interval, eval_iters, log_interval
+    global always_save_checkpoint, wandb_log, wandb_project, wandb_run_name
+    global dataset, gradient_accumulation_steps, batch_size, block_size
+    global n_layer, n_head, n_embd, dropout, attn_dropout, mlp_dropout
+    global resid_dropout, learning_rate, max_iters, lr_decay_iters, min_lr
+    global weight_decay, beta2, warmup_iters
+
+    out_dir = os.path.join(cache_base, 'out')
+    data_root = cache_base
+    eval_interval = 1000
+    eval_iters = 200
+    log_interval = 10
+    always_save_checkpoint = True
+    wandb_log = True
+    wandb_project = 'owt'
+    wandb_run_name = 'gpt2-124M'
+    dataset = 'openwebtext'
+    # 12 batch * 1024 block * 5 gradaccum * 8 GPUs = 491,520 tokens.
+    # DDP divides this by world size below, so each GPU runs 5 micro-steps.
+    gradient_accumulation_steps = 5 * 8
+    batch_size = 12
+    block_size = 1024
+    n_layer = 12
+    n_head = 12
+    n_embd = 768
+    dropout = 0.0
+    attn_dropout = None
+    mlp_dropout = None
+    resid_dropout = None
+    learning_rate = 6e-4
+    max_iters = 600000
+    lr_decay_iters = 600000
+    min_lr = 6e-5
+    weight_decay = 1e-1
+    beta2 = 0.95
+    warmup_iters = 2000
+
+
+config_name = _cli_value("config_name", config_name)
+if config_name == 'nanogpt':
+    apply_nanogpt_config()
+elif config_name == 'gpt2':
+    apply_gpt2_config()
+else:
+    raise ValueError("config_name must be 'nanogpt' or 'gpt2'")
+
+print(f"Using config_name: {config_name}")
+
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-# overrides from config file
-config_file = 'config/train_shakespeare_char.py'
-print(f"Overriding config with {config_file}:")
-#################################################
-
-
-out_dir = 'out-shakespeare-char'
-eval_interval = 250 # keep frequent because we'll overfit
-eval_iters = 200
-log_interval = 10 # don't print too too often
-
-# we expect to overfit on this small dataset, so only save when val improves
-always_save_checkpoint = False
-
-wandb_log = True # override via command line if you like
-wandb_project = 'shakespeare-char'
-wandb_run_name = 'mini-gpt'
-
-dataset = 'shakespeare_char'
-gradient_accumulation_steps = 1
-batch_size = 64
-block_size = 256 # context of up to 256 previous characters
-
-# baby GPT model :)
-n_layer = 6
-n_head = 6
-n_embd = 384
-dropout = 0.0  # base/embedding dropout (BW runs with 0.0)
-attn_dropout = 0.2  # 0.2 dropout on the attention softmax weights
-mlp_dropout = 0.2   # keep 0.2 dropout in the MLP
-resid_dropout = 0.0  # no dropout on the attention output projection
-
-learning_rate = 1e-3 # with baby networks can afford to go a bit higher
-max_iters = 5000
-lr_decay_iters = 5000 # make equal to max_iters usually
-min_lr = 1e-4 # learning_rate / 10 usually
-beta2 = 0.99 # make a bit bigger because number of tokens per iter is small
-
-warmup_iters = 100 # not super necessary potentially
-
-
-'''
-# config for training GPT-2 (124M) down to very nice loss of ~2.85 on 1 node of 8X A100 40GB
-# launch as the following (e.g. in a screen session) and wait ~5 days:
-# $ torchrun --standalone --nproc_per_node=8 train.py config/train_gpt2.py
-
-wandb_log = True
-wandb_project = 'owt'
-wandb_run_name = 'gpt2-124M'
-
-# these make the total batch size be ~0.5M
-# 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520
-batch_size = 12
-block_size = 1024
-gradient_accumulation_steps = 5 * 8
-
-# this makes total number of tokens be 300B
-max_iters = 600000
-lr_decay_iters = 600000
-
-# eval stuff
-eval_interval = 250 # 1000
-eval_iters = 200
-log_interval = 10
-
-# weight decay
-weight_decay = 1e-1
-'''
-
-######################################################
 
 for arg in sys.argv[1:]:
     if not arg.startswith("--") or "=" not in arg:
@@ -199,6 +215,10 @@ for arg in sys.argv[1:]:
 bw_iter_calibration = (
     normalization_type != "layer_norm" and batch_center_mode == "calibrated"
 )
+
+print(f"normalization_type: {normalization_type}")
+print(f"batch_center_mode: {batch_center_mode}")
+print(f"bw_iter_calibration: {bw_iter_calibration}")
 
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
@@ -252,8 +272,7 @@ use_autocast = device_type == 'cuda' or (device_type == 'mps' and dtype in ('flo
 ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if use_autocast else nullcontext()
 
 # poor man's data loader
-#data_dir = os.path.join(cache_base, dataset)  # When training GPT2 in CW - reading from cache
-data_dir = os.path.join('data', dataset)
+data_dir = os.path.join(data_root, dataset)
 def get_batch(split):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
@@ -411,9 +430,6 @@ def calibrate_bw_iteration_stats():
     """Calibrate running_mean/running_cov from random batches before each training iteration."""
     if not bw_iter_calibration:
         return
-    # During cov_warmup we want the original training-mode BW behavior.
-    if getattr(raw_model, "curr_cov_warmup", False):
-        return
     was_training = model.training
     try:
         # Sample fresh random batches each iteration
@@ -436,6 +452,12 @@ def calibrate_bw_iteration_stats():
         raw_model.set_bw_update_running_cov_stats(False)
         if was_training:
             model.train()
+
+if bw_iter_calibration:
+    # Calibrated mode uses freshly collected running stats from iter 0, so avoid
+    # the diagonal/full-cov warmup branch and its eval_interval mode switch.
+    raw_model.set_bw_cov_warmup(False)
+    calibrate_bw_iteration_stats()
 
 running_mfu = -1.0
 while True:

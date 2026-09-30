@@ -240,6 +240,8 @@ def batch_orthonorm(
     device = X.device
     dtype = X.dtype
 
+    print(f"n_groups: {n_groups}, group_size: {C // n_groups}")
+
     assert C % n_groups == 0, "C must be divisible by n_groups"
     group_size = C // n_groups
 
@@ -561,6 +563,8 @@ class BatchWhiteningBlock(nn.Module):
             raise ValueError(
                 f"group_size={group_size} must divide num_features={num_features}"
             )
+        # TODO: remove!!!!!!!!!!!!!!!!!! Group size for nanoGPT with momentum 0.1 is 16
+        #group_size = 128
         self.group_size = group_size
         self.num_groups = num_features // group_size
         self.momentum = 1.0 - mom
