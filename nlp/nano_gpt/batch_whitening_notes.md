@@ -87,8 +87,8 @@ batch_center_mode = "running_mean"  # or "leave_one_out" or "calibrated"
 | `batch_center_mode` | Meaning |
 |---------------------|---------|
 | `"leave_one_out"` | Use pure leave-one-out batch statistics during training. |
-| `"running_mean"` | Blend leave-one-out batch statistics with running statistics and update the running statistics. |
-| `"calibrated"` | Calibrate running statistics before the training step and do not overwrite them during training. |
+| `"running_mean"` | Full BW: center with the leave-one-out mean, whiten with a covariance blended from the running EMA and the current batch. Mean-only: blend the leave-one-out mean with the running mean. Running statistics are updated in both. |
+| `"calibrated"` | Calibrate running statistics before the training step and do not overwrite them during training. Full BW boosts the current-batch gradient by `1/momentum`. |
 
 `bw_iter_calibration` is internal now. The code sets it automatically from:
 
@@ -189,7 +189,7 @@ These are the settings and runtime flags needed for the full Batch Whitening var
 | Full BW behavior | `normalization_type` | `batch_center_mode` | `bw_iter_calibration` | BW `momentum` | `update_running_stats` after calibration | `update_running_cov_stats` after calibration | Notes |
 |------|---------------------|-------------------|-----------------------|---------------|------------------------------------------|----------------------------------------------|-------|
 | `leave_one_out` | `"full_bw"` | `"leave_one_out"` | Auto: `False` | `0.1` by default | `True` | `True` | Uses pure leave-one-out mean/cov during training and stores current stats for inference. |
-| `running_mean` | `"full_bw"` | `"running_mean"` | Auto: `False` | `0.1` by default | `True` | `True` | Standard full BW behavior. Running mean/cov are updated during training. |
+| `running_mean` | `"full_bw"` | `"running_mean"` | Auto: `False` | `0.1` by default | `True` | `True` | Centers with the leave-one-out mean; only the covariance is pooled over iterations. Running mean/cov are updated during training. |
 | `calibrated` | `"full_bw"` | `"calibrated"` | Auto: `True` | `0.1` by default | `False` | `False` | Calibration commits both `running_mean` and `running_cov`, then freezes both so the training batch does not overwrite them. |
 
 The `update_running_stats` and `update_running_cov_stats` flags are layer attributes on `BatchWhiteningBlock`. They default to `True`; `train.py` sets them to `False` after each calibration commit. `bw_iter_calibration` is derived automatically from `batch_center_mode == "calibrated"` after config overrides.
@@ -202,23 +202,35 @@ During training with `B > 1`, full BW computes:
 - A leave-one-out covariance for whitening each sequence.
 - Stored running statistics for inference and for mixed training centering.
 
-The centering formula depends on `batch_center_mode`:
+The mean, the center used for the covariance, and the whitening covariance depend on `batch_center_mode` (`cov` is the current leave-one-out covariance and carries the gradient; `running_mean` and `running_cov` are detached buffers):
 
 ```text
 leave_one_out:
-    current_mean = mean_other
+    current_mean      = mean_other
+    cov centered about  mean_other
+    cov_for_whitening = cov
 
-running_mean / calibrated:
-    current_mean = (1 - momentum) * running_mean + momentum * mean_other
+running_mean:
+    current_mean      = mean_other                       # same as leave_one_out
+    cov centered about  mean_other
+    cov_for_whitening = (1 - momentum) * running_cov + momentum * cov
+
+calibrated:
+    blended           = (1 - momentum) * running_mean + momentum * mean_other
+    current_mean      = boost_grad(blended, 1 / momentum)
+    cov centered about  blended                          # un-boosted
+    cov_for_whitening = boost_grad((1 - momentum) * running_cov + momentum * cov, 1 / momentum)
 ```
 
-Covariance is also maintained in `running_cov` and used for the Cholesky whitening step.
+`boost_grad(t, s) = s * t - (s - 1) * t.detach()` leaves the forward value unchanged and multiplies the gradient by `s`. The history buffers are detached, so the boost only scales the gradient of the current-batch term: `momentum * (1 / momentum) = 1`, the same gradient strength as `leave_one_out`. The scale can be overridden with the module-level `STAT_GRAD_SCALE` in `model.py` (`None` means `1 / momentum`). The boost is skipped while `cov_warmup` is active.
 
-| Mode | Training mean subtracted | Training covariance used | Updates `running_mean`? | Updates `running_cov`? |
-|------|--------------------------|--------------------------|--------------------------|------------------------|
-| `leave_one_out` | Pure leave-one-out mean selected by `batch_center_mode="leave_one_out"` | Current leave-one-out covariance | Yes, copies current batch mean | Yes, copies current leave-one-out covariance |
-| `running_mean` | Mixed mean: `(1 - momentum) * running_mean + momentum * mean_other` | Running covariance updated from current leave-one-out covariance | Yes, EMA update | Yes |
-| `calibrated` | Mixed mean using a calibrated `running_mean` | Calibrated `running_cov` from the same calibration batches | No, after calibration disables mean updates | No, after calibration disables covariance updates |
+| Mode | Training mean subtracted | Training covariance used | Gradient boost | Updates `running_mean`? | Updates `running_cov`? |
+|------|--------------------------|--------------------------|----------------|--------------------------|------------------------|
+| `leave_one_out` | `mean_other` | Current leave-one-out covariance | No (not needed, coefficient is already 1) | Yes, copies current batch mean | Yes, copies current leave-one-out covariance |
+| `running_mean` | `mean_other` | `(1 - momentum) * running_cov + momentum * cov` | No | Yes, EMA update (used only at inference) | Yes, EMA update |
+| `calibrated` | `(1 - momentum) * calibrated_running_mean + momentum * mean_other` | `(1 - momentum) * calibrated_running_cov + momentum * cov`, with `cov` centered about the blended mean | Yes, `1 / momentum` on mean and covariance | No, after calibration disables mean updates | No, after calibration disables covariance updates |
+
+The reasons for these choices are in [Why the modes center and boost the way they do](#why-the-modes-center-and-boost-the-way-they-do).
 
 ### Full BW Inference Behavior
 
@@ -266,38 +278,71 @@ For mean-only centering, the same flow calibrates `running_mean`; there is no co
 | Mean-only `running_mean` | Subtracts mix of EMA running mean and leave-one-out mean. Updates EMA. | Subtracts EMA running mean. |
 | Mean-only `calibrated` | Subtracts mix of calibrated mean and leave-one-out mean. Does not update mean. | Subtracts calibrated mean. |
 | Full BW `leave_one_out` | Uses current leave-one-out mean/cov selected by `batch_center_mode="leave_one_out"`. Stores current stats. | Uses last stored mean/cov. |
-| Full BW `running_mean` | Uses mixed mean and running covariance. Updates running mean/cov. | Uses stored running mean/cov. |
-| Full BW `calibrated` | Uses calibrated mean mixed with leave-one-out mean and calibrated covariance. Does not update mean/cov after calibration. | Uses calibrated mean and calibrated covariance. |
+| Full BW `running_mean` | Centers with the leave-one-out mean; whitens with running covariance blended with the current leave-one-out covariance. Updates running mean/cov. | Uses stored running mean/cov. |
+| Full BW `calibrated` | Uses calibrated mean mixed with leave-one-out mean and calibrated covariance, with the current-batch gradient boosted by `1/momentum`. Does not update mean/cov after calibration. | Uses calibrated mean and calibrated covariance. |
 
 ## Short Interpretation
 
 `leave_one_out` is the most batch-dependent mode. It removes each sequence's own contribution from the mean/cov estimate used to normalize that sequence.
 
-`running_mean` is the standard smoothed-statistics mode. It still uses current batch information during training, but it blends it with stored running estimates and updates those estimates over time.
+`running_mean` (full BW) centers exactly like `leave_one_out` and pools only the covariance over iterations through the EMA buffer. Its `running_mean` buffer is still updated, but only for inference.
 
-`calibrated` tests whether online running statistics are the problem. It refreshes `running_mean` and `running_cov` from extra calibration batches before training, then prevents the training batch from overwriting those calibrated statistics.
+`calibrated` refreshes `running_mean` and `running_cov` from extra calibration batches at the current weights before each step, then prevents the training batch from overwriting them. Because the current batch only enters with weight `momentum`, its gradient is boosted by `1/momentum`.
 
-### Possible reason `leave_one_out` trains better
+### Why the modes center and boost the way they do
 
-One plausible reason `leave_one_out` can outperform the other two modes is that the current-batch statistic has a stronger path through the training computation.
+#### Root cause: a detached centering mean breaks backward scale invariance
 
-For `leave_one_out`, the current leave-one-out mean is used directly:
+In the current architecture BW sits on the residual stream and is followed directly by LayerNorm:
 
-```text
-current_mean = mean_other
+```python
+x = x + self.mlp(self.ln_2(self.bw_2(x)))
 ```
 
-So the current-batch centering statistic has coefficient `1`.
+For the training loss to be insensitive to the scale of `x`, the path `ln_2(bw_2(x))` must be invariant to `x -> c * x`. Write the whitening as `L^-1 (x - m)`, with `L L^T` the whitening covariance and `m` the centering mean.
 
-For `running_mean` and `calibrated`, the current leave-one-out mean is only mixed in with weight `momentum`:
+- If `m` and `L` both scale with `x` (they carry the gradient), the output is unchanged, and the gradient has no component along `x`. This is `leave_one_out`.
+- If `L` comes from a detached buffer but `m` scales with `x`, the output becomes `(1/k) L^-1 (x - m)` for some scalar `k`. LayerNorm cancels a scalar, so this is still harmless.
+- If `m` comes mostly from a detached buffer, the output becomes `c L^-1 x - L^-1 m_fixed`. The fixed `L^-1 m_fixed` term does not scale, LayerNorm cannot cancel it, and the gradient gains a component along `x`. The optimizer then grows the residual stream step after step.
 
-```text
-current_mean = (1 - momentum) * running_mean + momentum * mean_other
-```
+Measured as the relative radial gradient `||J x|| / ||f||` through `bw_2 -> ln_2` (0 means scale-invariant):
 
-With the default `momentum=0.1`, only `0.1` of the current-batch mean participates in the normalized activation. The other `0.9` comes from the stored running or calibrated buffer. This means the immediate training signal through the current-batch centering path is much weaker than in `leave_one_out`.
+| Variant | Radial gradient |
+|---------|-----------------|
+| `leave_one_out` | 0.0000 |
+| `running_mean` with blended (mostly detached) mean | 0.64 – 0.76 |
+| `calibrated` without boost | 0.64 |
+| `calibrated` with `1/momentum` boost | 0.04 |
 
-This is a hypothesis for why `leave_one_out` may train better: it applies the full current-batch correction each forward pass, while `running_mean` and `calibrated` damp that correction by the momentum factor. In full BW, the same intuition also applies to the covariance side: `leave_one_out` uses the current leave-one-out covariance directly, while the other modes rely more heavily on stored covariance statistics.
+The old `running_mean` run with the blended mean and no boost diverged this way (job 19765665): the BW input RMS grew to ~880 and the train loss was 2.30 at step 3750. With the boost added it trained, but badly (final train loss 1.44, job 19550653).
+
+#### Why `running_mean` centers with the leave-one-out mean and is not boosted
+
+Centering with `mean_other` makes `m` scale with `x`, which restores scale invariance exactly, the same way as in `leave_one_out`. The covariance stays pooled (EMA history plus current batch). Its detached part only rescales the output, which LayerNorm cancels, so it does not need a boost.
+
+With this change `running_mean` trains like `leave_one_out` (job 19767048, [wandb](https://wandb.ai/nv-welcome/shakespeare-char/runs/hgz4l43a)): BW input RMS stays flat at ~1.5, and the train loss at step 3750 is 0.134, versus 0.150 for `leave_one_out` (job 19167507).
+
+The boost is not applied because it only gives the right gradient when the history term moves with the current weights. In both modes the history is detached and only the current-batch gradient is multiplied by `1/momentum`. The difference is what that boosted gradient claims about the next step. In `calibrated`, the next step rebuilds the history at the new weights, so a weight change immediately shows up with full strength, and treating the current-batch weight as 1 is right. In `running_mean`, the EMA absorbs a change gradually: `0.10, 0.19, 0.41, 0.65` of it after `1, 2, 5, 10` steps. A ×10 gradient therefore overstates the effect of a step by ~10× on the next forward.
+
+The `running_mean` buffer is also not used for training centering because, at `momentum=0.1`, it lags the current activations by roughly 9–12 steps. Measured drift is 0.025 after 1 step and 0.20 after 10 steps, against a 0.01 noise floor. For the batch sizes used here, the best pooling window for the mean was a single batch.
+
+#### Why `calibrated` keeps the blended mean with a boost
+
+Calibration recomputes `running_mean`/`running_cov` at the current weights from `bw_iter_calibration_num_batches` batches. That makes the blended mean an almost fresh estimate, and the `1/momentum` boost brings the current-batch gradient back to `leave_one_out` strength. The remaining radial gradient (0.04) grows with how stale the history is: 0.12 at 5% lag, 0.23 at 10%, 0.77 at 30%. So the boost is valid only because calibration keeps the history close to the current weights. The final calibrated train loss was 0.117 (job 19548573), versus 0.106 for `leave_one_out`.
+
+In `calibrated` only, the covariance is centered about the same blended mean that centers the data. The second moment of the centered data is `Sigma + d d^T`, with `d` the centering error, so this makes the covariance consistent with what is actually whitened. It is not done for `running_mean`: there the `d d^T` term would accumulate in the EMA buffer (measured ~22% inflation of `running_cov`), and that variant trained worse (job 19560085: 1.65 versus 1.44). `calibrated` overwrites its buffer from the calibration pass, so nothing accumulates. The run 19548573 predates this centering change, so `calibrated` with it has not yet been validated in a full run.
+
+#### Small batches
+
+`running_mean` training centering depends only on the other `B-1` sequences, the same as `leave_one_out`. Training with `B = 1` raises an error in every mode. With very small `B` the mean estimate is noisy. A possible untested extension is a pooled mean that stays scale-equivariant, for example `running_mean * (s_now / s_run)`, where `s` is a current versus running activation scale.
+
+#### Mean-only path
+
+These changes apply to full BW (`batch_orthonorm`) only. `batch_center_only` (`normalization_type="center_only"`) still uses the blended mean for both `running_mean` and `calibrated`, without a boost.
+
+#### Monitoring
+
+`train.py` logs BW health metrics at every eval (`bw_health()`): `bw/input_rms`, `bw/input_rms_max`, `bw/output_scale`, `bw/resid_mean_sd`, and `bw/running_mean_err`. A steadily rising `bw/input_rms` is the signature of the scale-invariance failure described above.
 
 ## Momentum And Calibration Batch Notes
 

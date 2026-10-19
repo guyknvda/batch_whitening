@@ -75,7 +75,7 @@ mlp_dropout = None   # None -> use `dropout`
 resid_dropout = None # None -> use `attn_dropout`
 bias = False # do we use bias inside LayerNorm and Linear layers?
 normalization_type = "full_bw" # "layer_norm", "full_bw", or "center_only"
-batch_center_mode = "calibrated" # "leave_one_out", "running_mean", or "calibrated"
+batch_center_mode = "running_mean" # "leave_one_out", "running_mean", or "calibrated"
 bw_iter_calibration = False
 bw_iter_calibration_num_batches = 10
 learning_rate = 6e-4 # max learning rate
@@ -459,6 +459,53 @@ if bw_iter_calibration:
     raw_model.set_bw_cov_warmup(False)
     calibrate_bw_iteration_stats()
 
+@torch.no_grad()
+def bw_health():
+    """Per-BW-layer health on one training batch, averaged over layers.
+
+    Under no_grad the BW layers whiten with their buffers and leave them
+    untouched, so this has no effect on training.
+    """
+    layers = [l for l in getattr(raw_model, "bw_layers", [])
+              if hasattr(l, "running_mean") and hasattr(l, "num_groups")]
+    if not layers:
+        return None
+    rows = []
+
+    def hook(mod, inp, out):
+        Xi = inp[0].float()
+        B_, T_, C_ = Xi.shape
+        ng, gs = mod.num_groups, mod.group_size
+        Yg = out.float().view(B_, T_, ng, gs)
+        sd = Yg.std(dim=(0, 1)).pow(2).mean().sqrt().clamp_min(1e-12)
+        Xg = Xi.view(B_, T_, ng, gs)
+        fresh = Xg.mean(dim=(0, 1))
+        buf = mod.running_mean.float().view(ng, gs)
+        rows.append((
+            Xi.pow(2).mean().sqrt().item(),                       # input rms
+            sd.item(),                                            # output scale
+            (Yg.mean(dim=(0, 1)).norm() / (sd * C_ ** 0.5)).item(),  # resid mean, sd
+            ((buf - fresh).norm() / fresh.norm().clamp_min(1e-12)).item(),
+        ))
+
+    hs = [l.register_forward_hook(hook) for l in layers]
+    try:
+        Xh, _ = get_batch('train')
+        with ctx:
+            model(Xh)
+    finally:
+        for h in hs:
+            h.remove()
+    a = np.array(rows)
+    return {
+        "bw/input_rms": a[:, 0].mean(),
+        "bw/input_rms_max": a[:, 0].max(),
+        "bw/output_scale": a[:, 1].mean(),
+        "bw/resid_mean_sd": a[:, 2].mean(),
+        "bw/running_mean_err": a[:, 3].mean(),
+    }
+
+
 running_mfu = -1.0
 while True:
 
@@ -471,6 +518,13 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        health = bw_health()
+        if health:
+            print(f"step {iter_num}: bw input_rms {health['bw/input_rms']:.4f} "
+                  f"(max {health['bw/input_rms_max']:.4f}), "
+                  f"output_scale {health['bw/output_scale']:.4f}, "
+                  f"resid_mean_sd {health['bw/resid_mean_sd']:.4f}, "
+                  f"running_mean_err {health['bw/running_mean_err']:.4f}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -478,6 +532,7 @@ while True:
                 "val/loss": losses['val'],
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
+                **(health or {}),
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']

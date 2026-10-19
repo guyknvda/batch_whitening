@@ -214,6 +214,19 @@ def batch_center_only(
     return Y, running_mean.detach(), gamma, beta
 
 
+# The calibrated mode weights the current batch by `momentum`, which attenuates
+# its gradient by the same factor, so 1/momentum exactly restores leave-one-out
+# gradient strength (not applied to running_mean). The alignment is sharp: 2x that
+# value already makes the gradient orthogonal to the leave-one-out direction,
+# so keep the scale tied to momentum unless deliberately sweeping it.
+STAT_GRAD_SCALE = None  # override; None -> 1/momentum
+
+
+def boost_grad(t, scale):
+    """Return `t` unchanged in the forward pass, with its gradient scaled."""
+    return scale * t - (scale - 1.0) * t.detach()
+
+
 def batch_orthonorm(
     X,
     gamma=None,
@@ -240,7 +253,9 @@ def batch_orthonorm(
     device = X.device
     dtype = X.dtype
 
-    print(f"n_groups: {n_groups}, group_size: {C // n_groups}")
+    if not getattr(batch_orthonorm, "_printed_group_size", False):
+        print(f"n_groups: {n_groups}, group_size: {C // n_groups}")
+        batch_orthonorm._printed_group_size = True
 
     assert C % n_groups == 0, "C must be divisible by n_groups"
     group_size = C // n_groups
@@ -249,6 +264,18 @@ def batch_orthonorm(
         training = torch.is_grad_enabled()
     else:
         training = bool(training_mode)
+
+    # Only calibrated recomputes its history term at the current weights, so
+    # only there does the history really co-vary with the current batch and the
+    # boost restore a real derivative. running_mean's history is a stale EMA
+    # that does not respond to this step; boosting it overstates the gradient
+    # 1/momentum-fold and makes the activations run away.
+    if center_mode == "calibrated":
+        stat_grad_scale = (
+            STAT_GRAD_SCALE if STAT_GRAD_SCALE is not None else 1.0 / momentum
+        )
+    else:
+        stat_grad_scale = 1.0
 
     # Verification-only oracle: whiten with the whole-batch mean+covariance
     # computed over ALL B*T tokens (including self). This breaks causality by
@@ -307,18 +334,40 @@ def batch_orthonorm(
         count_other = (B - 1) * T
         mean_other = (sum_all_flat - sum_per_seq) / count_other
 
-        if center_mode == "leave_one_out":
+        if center_mode in ("leave_one_out", "running_mean"):
+            # running_mean also centers with the full-gradient leave-one-out
+            # mean; only its covariance is pooled over iterations. A detached
+            # (blended) centering mean makes the output c*L^-1 x - L^-1 m under
+            # x -> c*x, and the fixed L^-1 m term survives the LayerNorm that
+            # follows, so the backward pass is not scale-invariant and the
+            # residual stream feeding this layer grows without bound. The
+            # detached covariance alone is harmless: it only rescales, which the
+            # LayerNorm cancels.
             current_mean = mean_other
-        elif center_mode in ("running_mean", "calibrated"):
+            center_for_cov = mean_other
+        elif center_mode == "calibrated":
             current_mean = (
                 1 - momentum
             ) * running_mean.view(
                 1, 1, n_groups, group_size
             ) + momentum * mean_other
+            # The covariance is taken about the same mean that centers the data,
+            # which makes it an unbiased estimate of the centered second moment.
+            # Safe here because calibrated overwrites running_cov from its
+            # calibration pass instead of accumulating an EMA; in an EMA the
+            # rank-1 centering-error terms would pile up and inflate the buffer.
+            # Un-boosted on purpose: boost_grad is forward-identity, so reusing
+            # the boosted current_mean would leave the forward pass unchanged
+            # while routing the covariance gradient through the mean's gradient
+            # scaling as well.
+            center_for_cov = current_mean
+            if not cov_warmup:
+                current_mean = boost_grad(current_mean, stat_grad_scale)
         else:
             raise ValueError(f"Unknown center_mode: {center_mode}")
     else:
         current_mean = running_mean.view(1, 1, n_groups, group_size)
+        center_for_cov = current_mean
 
     Xc_self = Xg - current_mean
 
@@ -351,10 +400,14 @@ def batch_orthonorm(
         # --------------------------------------
         # 3. Compute leave-one-out covariance (other sequences only)
         # --------------------------------------
-        # Use the same global leave-one-out mean that centers Xc_self above.
-        # A per-token leave-one-out mean shrinks the covariance and over-scales
-        # the whitened output.
-        X_other_centered = Xg.unsqueeze(0) - mean_other.unsqueeze(1)
+        # Center about the same mean that centers Xc_self above. The second
+        # moment of the centered data is Sigma + dd^T with d the centering
+        # error, so a covariance built about a *different* mean omits that
+        # rank-1 term and under-whitens along d. Identical to mean_other in
+        # leave_one_out mode; the term only bites when the running mean is
+        # stale. A per-token leave-one-out mean instead shrinks the covariance
+        # and over-scales the whitened output.
+        X_other_centered = Xg.unsqueeze(0) - center_for_cov.unsqueeze(1)
         diag_mask = torch.eye(
             B, dtype=torch.bool, device=device
         ).view(B, B, 1, 1, 1)
@@ -396,7 +449,9 @@ def batch_orthonorm(
         else:
             # running_mean / calibrated: constant history + current batch (grad),
             # current batch weighted by momentum, identical to the mean mix.
-            cov_for_whitening = (1 - momentum) * cov_history + momentum * cov
+            cov_for_whitening = boost_grad(
+                (1 - momentum) * cov_history + momentum * cov, stat_grad_scale
+            )
 
         # Update running buffers (no gradient) so they act as the constant
         # history next iter and as the stats used at inference time.
