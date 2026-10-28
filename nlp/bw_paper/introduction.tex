@@ -1,0 +1,72 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Normalization layers are fundamental components in modern deep learning. 
+Methods such as Batch Normalization, Layer Normalization, and Group Normalization 
+improve optimization stability and generalization by regulating feature statistics during training. 
+A more principled alternative is \emph{whitening}, which removes correlations across activation channels 
+by transforming the input $\mathbf{x}$ of a layer so that its covariance satisfies 
+$\Sigma_x \approx I$. Whitening is theoretically appealing: in linear models, 
+the Hessian is exactly $\Sigma_x$~\citep{amari1998natural,martens2010deep}, 
+and in deep nonlinear networks, dominant curvature terms such as the Gauss--Newton or Fisher matrices 
+inherit the anisotropy of $\Sigma_x$~\citep{desjardins2015natural,cho2021improving}. 
+Empirically, whitening improves gradient isotropy, reduces co-adaptation, 
+and stabilizes training across a range of architectures.
+
+Despite these benefits, \emph{practical} batch whitening (BW) has seen limited adoption. 
+Existing whitening techniques perform reliably only in restricted settings -- primarily CNNs on vision tasks -- 
+and often suffer from instability, reduced accuracy, or high computational cost. 
+Three challenges have prevented whitening from becoming a widely used normalization mechanism:
+
+\begin{enumerate}
+    \item \textbf{High-dimensional covariance estimation.} 
+    Modern architectures involve hundreds or thousands of channels, 
+    making covariance estimation and inversion noisy and computationally demanding.
+
+    \item \textbf{Strong inter-channel correlations.} 
+    Real activation patterns exhibit structured dependencies. 
+    Prior heuristics such as simple channel grouping or shuffling fail to capture these correlations 
+    and lead to suboptimal whitening.
+
+    \item \textbf{Causality constraints in sequence models.} 
+    For autoregressive tasks, whitening cannot rely on full-sequence statistics 
+    without violating causality. 
+    This has made whitening incompatible with large language models (LLMs), 
+    where LayerNorm remains the default.
+\end{enumerate}
+
+As a result, whitening has never been deployed in LLMs and has shown only partial success in vision models. 
+In this work, we revisit batch whitening from first principles and develop a framework 
+that addresses all three challenges, enabling whitening to operate effectively across both 
+\emph{vision} and \emph{language} domains.
+
+\subsection*{Our Contributions}
+
+We introduce the first practical and scalable Batch Whitening framework applicable to both vision architectures 
+and large language models. Our contributions are:
+
+\begin{itemize}
+    \item \textbf{A stable and accurate BW method for vision models.}
+    We introduce three techniques that collectively address long-standing barriers in whitening:
+    (i) \emph{Reorder \& Split}, a structural reorganization that places whitening immediately before the linear operation and moves the nonlinearity after it, preserving the orthonormal feature space;
+    (ii) \emph{Controlled Estimation Error}, which stabilizes covariance estimation through temporal averaging and adaptive block sizes chosen to keep estimation noise low; and
+    (iii) \emph{Handling Correlated Channels}, a shrinkage-based regularization that injects small independent noise to reduce harmful correlations and ensure the covariance is well-conditioned.
+    Together, these significantly improve whitening performance over prior methods in CNNs.
+
+
+    \item \textbf{Causal Batch Whitening (CBW): the first whitening method compatible with LLMs.} 
+    We propose a novel \emph{causality-preserving covariance estimator} that maintains autoregressive correctness 
+    while enabling effective whitening during both training and inference. 
+    No prior whitening method supports causal sequence modeling.
+
+    \item \textbf{A matrix-friendly, parallelizable implementation.} 
+    We design the CBW computation to be fully expressed as matrix operations, avoiding explicit loops. 
+    This allows efficient, parallel execution on GPUs, making it practical for large-scale modern LLMs.
+
+\end{itemize}
+
+By addressing the statistical, structural, and causal challenges that have limited whitening in practice, 
+this work establishes Batch Whitening and Causal Batch Whitening as viable normalization mechanisms 
+for large-scale deep learning.
+An empirical evaluation across both vision and language tasks demonstrates that our whitening layers reduce gradient anisotropy, 
+stabilize long-horizon optimization, and achieve competitive or improved accuracy compared to LayerNorm, GroupNorm, and existing whitening variants.

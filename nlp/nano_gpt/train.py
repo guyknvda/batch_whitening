@@ -78,6 +78,13 @@ normalization_type = "full_bw" # "layer_norm", "full_bw", or "center_only"
 batch_center_mode = "running_mean" # "leave_one_out", "running_mean", or "calibrated"
 bw_iter_calibration = False
 bw_iter_calibration_num_batches = 10
+bw_group_size = 0  # 0 -> derive automatically
+bw_momentum = 0.1
+bw_fix_factor = 0.9
+bw_warmup = "diag"  # "diag", "diag_ema", or "none"
+bw_inference_ema = False  # leave_one_out only
+bw_grad_scale = 0.0  # gradient boost on BW statistics; 0 -> per-mode default
+bw_calib_center = "loo"  # calibrated only: "loo", "blend_loo_cov", or "blend" (runs away)
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
 weight_decay = 1e-1
@@ -96,6 +103,7 @@ device = (
 ) # examples: 'cpu', 'mps', 'cuda', 'cuda:0', 'cuda:1'
 dtype = 'float32'  # 'float32', 'bfloat16', 'float16', or 'float64'
 compile = False # use PyTorch 2.0 to compile the model to be faster
+seed = 1337
 
 
 def _cli_value(name, default):
@@ -261,7 +269,7 @@ print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
-torch.manual_seed(1337 + seed_offset)
+torch.manual_seed(seed + seed_offset)
 if device.startswith('cuda'):
     torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
     torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
@@ -309,7 +317,12 @@ model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=bloc
                   attn_dropout=attn_dropout, mlp_dropout=mlp_dropout,
                   resid_dropout=resid_dropout,
                   normalization_type=normalization_type,
-                  batch_center_mode=batch_center_mode) # start with model_args from command line
+                  batch_center_mode=batch_center_mode,
+                  bw_group_size=bw_group_size or None, bw_momentum=bw_momentum,
+                  bw_fix_factor=bw_fix_factor, bw_warmup=bw_warmup,
+                  bw_inference_ema=bw_inference_ema,
+                  bw_grad_scale=bw_grad_scale,
+                  bw_calib_center=bw_calib_center) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")

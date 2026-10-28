@@ -1,0 +1,243 @@
+\section{Causal BW for Autoregressive Transformers}
+
+While in \S~\ref{sec:bw_for_vision} we presented BW and its implementation details for vision tasks, we now extend the method to autoregressive language models, where causality introduces unique challenges in maintaining valid whitening transformations.
+In a language model, the token $t$ must not depend on the information from future tokens $t' > t$.  
+Conventional whitening, which computes a covariance matrix across all tokens in a batch, implicitly mixes information from all time steps.
+This leaks future information into the present and invalidates the autoregressive objective.
+
+To address this, we propose \textbf{Causal Batch Whitening (CBW)}, which performs whitening on feature representations while strictly preserving temporal causality.  
+CBW achieves decorrelation of features (improving optimization efficiency) without allowing gradients or normalization statistics from future tokens to influence the current token.
+
+
+\subsection{Mathematical Formulation}
+
+\todoinline{Consider using $C$ instead of $D$, to match channel dim in vision section.}
+
+Let $\mathbf{x} \in \mathbb{R}^{B \times T \times D}$ denote the activation (input) tensor, where $B$ is the batch size, $T$ is the sequence length, and $D$ is the feature dimension (channels).  
+Each token representation is $\mathbf{x}_{s,t} \in \mathbb{R}^{D}$.
+
+To preserve causality, the feature-feature covariance for a token $t$ in sequence $s$ must exclude future tokens from that sequence, while still allowing all tokens from other sequences in the batch to contribute.
+Therefore, the feature-feature covariance for a token $t$ in sequence $s$ is defined as:
+\begin{align} \label{eq:full_cbw}
+\boldsymbol{\Sigma}_{s,t} =& \frac{1}{(B-1) T}
+\sum_{s' \neq s} \sum_{i=1}^{T} (\mathbf{x}_{s',i} - \boldsymbol{\mu}) (\mathbf{x}_{s',i} - \boldsymbol{\mu})^\top
++ \nonumber \\
+& \frac{1}{t} \sum_{i=1}^{t} (\mathbf{x}_{s,i} - \boldsymbol{\mu}) (\mathbf{x}_{s,i} - \boldsymbol{\mu})^\top,
+\end{align}
+where $\boldsymbol{\mu}$ is the mean over the batch and sequence-aware.  
+
+This ensures whitening at token $t$ leverages the full batch for statistical efficiency, but strictly prevents future leakage within the sequence.
+
+
+\iffalse
+
+\subsection{Sequential CBW via Cumulative Covariance}
+
+A straightforward approach for preserving causality is to compute a per-token covariance for each sequence using a cumulative sum along the temporal dimension:
+
+\begin{align*}
+&\text{outer}_{b,t} = (\mathbf{x}_{b,t} - \boldsymbol{\mu}) (\mathbf{x}_{b,t} - \boldsymbol{\mu})^\top, \\
+&\boldsymbol{\Sigma}_{b,t} = \frac{1}{(B-1) \cdot T} \sum_{b' \neq b} \sum_{i=1}^{T} \text{outer}_{b',i} + \frac{1}{t} \sum_{i=1}^{t} \text{outer}_{b,i}.
+\end{align*}
+
+The whitening is then applied per token:
+\begin{equation}
+\tilde{\mathbf{x}}_{b,t} = \boldsymbol{\Sigma}_{b,t}^{-\frac{1}{2}} (\mathbf{x}_{b,t} - \boldsymbol{\mu}).
+\end{equation}
+
+Note that tokens $> t$ in the same sequence are excluded, preserving autoregressive causality.
+In addition, All tokens from other sequences are included to improve statistical estimates.
+This method is exact but sequential along the sequence dimension, limiting parallelism.
+
+\begin{algorithm}[tb]
+    \caption{Sequential CBW}
+    \label{alg:cbw_sequential}
+    \begin{algorithmic}
+        \REQUIRE Batch $X \in \mathbb{R}^{B \times T \times D}$
+        \FOR{$b = 1 \to B$}
+            \FOR{$t = 1 \to T$}
+                \STATE Mean using all other sequences and past tokens of $b$:
+                \[
+                    \mu_{b,t} = \frac{
+                        \sum_{b' \neq b} \sum_{t'=1}^{T} X_{b',t'} +
+                        \sum_{t'=1}^{t} X_{b,t'}
+                    }{(B-1)T + t}
+                \]
+                \STATE Center current token:
+                $
+                    \tilde{X}_{b,t} = X_{b,t} - \mu_{b,t}
+                $
+                \STATE Form covariance from \emph{all other sequences}:
+                \[
+                    \Sigma_{\text{other}} = \sum_{b' \neq b} \sum_{t'=1}^{T} 
+                        \tilde{X}_{b',t'} \tilde{X}_{b',t'}^\top
+                \]
+                \STATE Form covariance from the \emph{past tokens of sequence $b$}:
+                \[
+                    \Sigma_{\text{past}} = \sum_{t' \le t} 
+                        \tilde{X}_{b,t'} \tilde{X}_{b,t'}^\top
+                \]
+                \STATE Covariance matrix:
+                $
+                    \Sigma_{b,t} = \frac{\Sigma_{\text{other}} + \Sigma_{\text{past}}}
+                                         {(B-1)T + t}
+                $
+                \STATE Whitening matrix $W_{b,t} = \Sigma_{b,t}^{-1/2}$ 
+                \STATE Whiten token: $Y_{b,t} = W_{b,t} \tilde{X}_{b,t}$
+            \ENDFOR
+        \ENDFOR
+        \STATE \textbf{return} Whitened output $Y$
+    \end{algorithmic}
+\end{algorithm}
+
+
+
+\iffalse
+
+\begin{lstlisting}[caption={Causal Batch Whitening (Sequential)}]
+# X: (B, T, D)
+cov = torch.zeros(B, D, D, device=X.device)
+X_centered = X - X.mean(dim=(0,1), keepdim=True)
+for b in range(B):
+    for t in range(T):
+        # Include all other sequences fully
+        other_cov = X_centered[torch.arange(B)!=b].reshape(-1, D).T @ X_centered[torch.arange(B)!=b].reshape(-1, D)
+        # Include only past tokens in this sequence
+        seq_cov = X_centered[b,:t+1].T @ X_centered[b,:t+1]
+        Sigma_bt = (other_cov + seq_cov) / ((B-1)*T + (t+1))
+        W_bt = matrix_sqrt_inv(Sigma_bt)   # Cholesky / Newton iterations
+        X_whitened[b,t] = W_bt @ X_centered[b,t]
+\end{lstlisting}
+
+\fi
+
+\fi
+
+
+\subsection{Practical Parallel CBW: exclude same-sequence tokens}
+
+\todoinline{Include Amir's suggestion to use grad/stop-grad so that we can use the full cov and also be memory efficient. Need the algebra to understand how it can be done with mask matrix.}
+
+Although Eq.~\eqref{eq:full_cbw} uses as much data as possible without breaking causality, computing the covariance for every token in parallel remains challenging:
+each token aggregates a different number of valid contributors, and the formulation requires a distinct $B \cdot T$ covariance matrices of size $D\times D$ each, for all the tokens.
+For realistic LLMs with large $T$ and high feature dimensionality $D$, this becomes memory- and compute-prohibitive.
+
+A practical compromise -- avoiding full per-token CBW while remaining close to it and enabling efficient parallel computation -- is to compute, for each sequence \(s\) in the minibatch, a \emph{per-sequence} feature covariance that uses \emph{all tokens from other sequences} but \emph{excludes all tokens from sequence \(s\)}. Concretely, for a batch \(X\in\mathbb{R}^{B\times T\times D}\) we define for each sequence \(s\):
+\begin{align*}
+\Sigma^{(-s)} = \frac{1}{(B-1)T}
+\sum_{s'\neq s}\sum_{t=1}^{T}
+(x_{s',t}-\mu^{(-s)})(x_{s',t}-\mu^{(-s)})^{\top},
+\end{align*}
+where \(\mu^{(-s)}\) is the mean over tokens of all sequences except \(s\).
+This choice (a) preserves strict causality inside each sequence because statistics never include any token from the same sequence (past or future), (b) yields strong estimates because it aggregates a large number of tokens across other sequences when \(B>1\) and \(T\) is large, and (c) requires only \(B\) covariance matrices of size \(D\times D\), which is computationally manageable and trivially parallelizable on modern accelerators.
+Note that during the training process, the batch size $B$ is in most cases larger than 1.
+In the inference stage, we use the existing statistics from the training process, hence indifferent to using batches with a single sequence in the batch.
+
+\todoinline{The algo is missing grouping and all the features from the previous vision section. Maybe, for simplicity, we can just should how to build the covariance, with groups of channels}
+
+Algorithm~\ref{alg:cbw_parallel} presents the pseudocode for the parallel CBW procedure. 
+It computes the exclusion covariances $\Sigma^{(-s)}$ for all sequences, obtains their 
+whitening transforms (inverse square roots), and then applies the corresponding transform 
+to each sequence.
+The entire computation can be vectorized across the batch, thereby 
+removing any loop over $B$.
+In practice, the implementation uses efficient matrix operations, ensuring that no Python-level loops over $B$ or $T$ appear in the performance–critical path.
+
+
+\iffalse
+
+\begin{algorithm}[tb]
+\caption{CBW Using Cross-Sentence Statistics}
+\label{alg:cbw_parallel}
+\begin{algorithmic}
+\REQUIRE Batch $X \in \mathbb{R}^{B \times T \times D}$
+
+\STATE \textbf{For each sequence $s \in B$:}
+\[
+a_s = \sum_{t} X_{s,t}, \quad 
+A_s = \sum_{t} X_{s,t} X_{s,t}^\top
+\]
+
+\STATE \textbf{Global totals:}
+$
+a_{\text{all}} = \sum_{s} a_s, \quad
+A_{\text{all}} = \sum_{s} A_s
+$
+
+\FOR{$s=1,\dots,B$ \textbf{in parallel}}
+    \STATE Exclude $s$:
+    $
+        a^{(-s)} = a_{\text{all}} - a_s,
+        \quad
+        A^{(-s)} = A_{\text{all}} - A_s
+    $
+    \STATE Number of available tokens: $N = (B-1)T$
+    \STATE Mean of other sequences:
+       $\mu^{(-s)} = a^{(-s)} / N$
+    \STATE  Cov matrix:
+    $
+        \Sigma^{(-s)} = A^{(-s)} / N - 
+            \mu^{(-s)} {\mu^{(-s)}}^\top
+    $
+    \STATE Whitening matrix: $W_s = \left(\Sigma^{(-s)}\right)^{-1/2}$
+    \STATE Whiten $s$:
+        $Y_{s,t} = W_s \left(X_{s,t} - \mu^{(-s)}\right)$
+\ENDFOR
+
+\STATE \textbf{return} Whitened output $Y$
+\end{algorithmic}
+\end{algorithm}
+
+\fi
+
+
+
+\begin{algorithm}[tb]
+\caption{CBW Sequence-Block Covariance}
+\label{alg:cbw_cov_blocks}
+\begin{algorithmic}
+\REQUIRE Batch $X \in \mathbb{R}^{B \times T \times D}$,
+         previous block covariance blocks $\{\Sigma_b^{(n-1)}\}_{b=1}^M$,
+         smoothing factor $\alpha$, block size $c$
+
+\STATE $c=$ \texttt{adaptive\_block\_size}($C$)
+\STATE $M \gets D / c$
+\STATE Reshape $X$ into blocks:
+       $X \in \mathbb{R}^{B \times T \times M \times c}$
+
+\FORALL{$(s,b) \in \{1,\dots,B\}\times\{1,\dots,M\}$ \textbf{in parallel}}
+
+    \STATE \COMMENT{Collect all tokens from other sequences for block $b$}
+    \STATE $x_{s',b} \gets \texttt{concat}\bigl(X_{s',1:T,b,:}\bigr)_{s' \neq s}$
+    \STATE $x_{s',b} \in \mathbb{R}^{(B-1)T \times c}$
+
+    \STATE Compute cov on these tokens:
+    $
+        \Sigma_{s,b} \gets \texttt{cov}(x_{s',b})
+    $
+
+    \STATE Running cov:
+    $
+        \Sigma_{s,b}^{\text{updated}}
+        =
+        \alpha\,\Sigma_b^{(n-1)}
+        +
+        (1-\alpha)\,\Sigma_{s,b}
+    $
+
+\ENDFOR
+
+\FORALL{$b \in \{1,\dots,M\}$ \textbf{in parallel}}
+\STATE Temporal update: keep a single running cov per $b$
+\[
+    \Sigma_b^{(n)} \gets \texttt{stop\_grad}\!\left( \frac{1}{B} 
+    \sum_{s=1}^B \Sigma_{s,b}^{\text{updated}} \right)
+\]
+\ENDFOR
+
+\STATE \textbf{return}
+       $\{\Sigma_{s,b}^{\text{updated}}\}_{s=1..B,\,b=1..M}$
+
+\end{algorithmic}
+\end{algorithm}
+

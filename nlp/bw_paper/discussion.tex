@@ -1,0 +1,15 @@
+\section{Discussion} \label{sec:discussion}
+
+\todoinline{What else? Maybe discuss the option to reduce num of channels while preserving accuracy or convergence rate?}
+
+\subsection{Why Whitening is Applied Across Features}
+\todoinline{Is this trivial info? Consider removing}
+
+Batch Whitening is applied in the \emph{feature} (channel) dimension rather than across tokens (in LLMs) or pixels (in CNNs).  
+In both domains, the model relies on correlations \emph{along the spatial or temporal axis}:  
+CNNs depend on local pixel relationships, and transformers depend on relationships between tokens.  
+Whitening across these axes would explicitly remove the very correlations the architecture is designed to model, thereby degrading attention patterns in LLMs and disrupting spatial structures in vision models.
+
+In contrast, whitening across \emph{feature channels} operates within each token or pixel representation.  
+This preserves structural relationships (token–token or pixel–pixel), while decorrelating hidden channels to improve conditioning, stabilize optimization, and reduce feature redundancy.  
+Thus, feature-domain whitening complements both convolutional and attention-based models: it improves the representation quality without disturbing the core correlation patterns these architectures are meant to capture.

@@ -1,0 +1,204 @@
+\section{BW for Convolutional Neural Networks}
+\label{sec:bw_for_vision}
+
+BW improves optimization dynamics in convolutional neural networks by decorrelating feature channels and equalizing their scales.  
+In practice, implementing BW requires addressing several challenges, including maintaining the orthonormality of features through nonlinearities, controlling estimation error in high-dimensional settings, and handling strongly correlated channels.  
+In the following subsections, we present three key techniques that collectively form a robust and practical whitening method.  
+We then discuss how these components are combined into a unified algorithm, including temporal updates across iterations, to yield the final Practical Batch Whitening (PBW) approach.
+
+
+%
+%
+%
+%
+
+\subsection{Reorder and Split}
+\todoinline{Review details}
+
+In Batch Norm (BN) it is standard to place a nonlinearity such as ReLU immediately after normalization, since BN only rescales channels and does not enforce any structural constraint that must be preserved.
+In contrast, Batch Whitening produces an orthonormal feature space that should remain intact until the subsequent linear (MAC) operation.
+Inserting a nonlinearity between whitening and the next MAC destroys this orthonormality, undermining the purpose of whitening.
+Therefore, for BW we propose to reorder and split the block: apply whitening immediately before the linear transformation, and place the nonlinearity after that linear step, ensuring that the decorrelated representation is consumed unaltered by the MAC.
+Figure~\ref{fig:bw_reorder_and_split} illustrates this proposed ordering.
+\todoinline{Explain the figure. Why the $+\beta$ is after the MAC and not part of it?}
+
+\todoinline{Need to add a comment here that some CNNs, like EfficientNet, are already designed like this and require no adaptations. For the rest of the CNNs, an adaptation of the net is needed (it is not simply replacing the BN with BW).}
+
+\begin{figure}
+    \centering
+    \resizebox{1.0\columnwidth}{!}{%
+        \input{figures/tikz_reorder.tex}%
+    }
+    \caption{\todoinline{(1) Add caption, (2) why the $+\beta$ is after the MAC and not part of it?}}
+    \label{fig:bw_reorder_and_split}
+\end{figure}
+
+%
+%
+%
+%
+
+\subsection{Controlling Estimation Error}
+\todoinline{Review details}
+
+In BW, the covariance matrix is estimated from a set of vectors (e.g., token or feature representations).  
+The accuracy of this estimate improves with the number of vectors $V$ used, and degrades as the number of channels $C$ increases.  
+Intuitively, the estimation error grows with $C$ because there are more covariance entries to estimate, and each entry has variance proportional to $1/V$~\cite{ledoit2004well,huang2018decorrelated}.  
+Formally, the expected Frobenius-norm error of the covariance estimate can be approximated as:
+\begin{equation}
+e \sim \sqrt{\frac{C^2}{2V}}.
+\label{eq:cov_error}
+\end{equation}
+Thus, when $C$ is large and $V$ is fixed, the estimate can be highly noisy.
+Since the activations entering a whitening layer are normalized, the entries of their covariance lie roughly in $[-1,1]$.
+An error of comparable magnitude would therefore swamp the very correlations that whitening is meant to remove, so $e$ must be kept well below $1$.
+Requiring $e \le e_{\max}$ for a target error $e_{\max}$ gives the number of samples needed for a reliable estimate:
+\begin{equation}
+V \ge \frac{C^2}{2 e_{\max}^2}.
+\label{eq:samples_needed}
+\end{equation}
+
+\paragraph{Samples per layer.}
+For a convolutional layer with input of shape $B \times H \times W \times C$, the covariance is taken along the channel axis, and every spatial position of every image is a sample of a $C$-dimensional vector, so $V = B \cdot H \cdot W$.
+The batch size $B$ is fixed throughout training, but in a typical CNN the spatial size $H \times W$ shrinks and the channel count $C$ grows with depth.
+The requirement in \eqref{eq:samples_needed} grows quadratically in $C$ while the available $V$ shrinks, so no single setting satisfies all layers: early layers have many samples and few channels, while late layers have few samples and many channels.
+
+We control the error with two complementary mechanisms:
+
+\begin{enumerate}
+    \item \textbf{Temporal averaging (increasing $V$).}
+    We maintain a running estimate of the covariance across training iterations~\cite{desjardins2015natural}:
+    \begin{equation*}
+    \boldsymbol{\Sigma}^{(n)} = (1-\alpha)\, \boldsymbol{\Sigma}^{(n-1)} + \alpha\, \boldsymbol{\Sigma}_{\text{batch}},
+    \end{equation*}
+    where $\alpha \in (0,1]$ is the momentum, i.e.\ the weight of the current batch.
+    The running estimate averages over roughly $1/\alpha$ recent batches, so the effective number of samples becomes
+    \begin{equation*}
+    V_{\text{eff}} \approx \frac{V}{\alpha}.
+    \end{equation*}
+    A smaller $\alpha$ lowers the noise, but the estimate then lags further behind the changing network, so $\alpha$ should be no smaller than needed.
+
+    \item \textbf{Block-diagonal covariance (decreasing $C$).}
+    Instead of estimating a full $C \times C$ covariance, we partition the channels into $M = C/c$ blocks of $c$ channels each and whiten every block independently.
+    This amounts to assuming a block-diagonal covariance: correlations within a block are estimated and removed, while correlations across blocks are ignored.
+    Each estimate now involves only $c$ channels, so the error becomes
+    \begin{equation*}
+    e_c \sim \sqrt{\frac{c^2}{2V_{\text{eff}}}}.
+    \end{equation*}
+    The two extremes recover familiar methods: $c = C$ is full whitening, and $c = 1$ estimates only per-channel variances, i.e.\ Batch Normalization.
+\end{enumerate}
+
+\paragraph{Adaptive block size and momentum.}
+Rather than tuning $c$ manually for every layer of every network, we choose it per layer from the error budget.
+Requiring $e_c \le e_{\max}$ gives the largest block size the available samples can support:
+\begin{equation}
+c = \min\!\left(C,\ \left\lfloor e_{\max} \sqrt{2 V / \alpha} \right\rfloor \right),
+\label{eq:adaptive_block}
+\end{equation}
+which we then round down to a divisor of $C$ so that the blocks partition the channels evenly.
+This keeps the estimation error roughly constant across layers: early layers, where $V_{\text{eff}} \gg C^2/(2e_{\max}^2)$, get $c = C$ and are fully whitened, while deeper layers with fewer samples and more channels get progressively smaller blocks.
+If \eqref{eq:adaptive_block} yields $c = 1$, the layer does not have enough samples for any reliable decorrelation, and BW reduces to Batch Normalization.
+
+At the other extreme, when the unconstrained block size exceeds $C$, the layer has more samples than full whitening requires.
+The surplus can instead be spent on freshness: we increase $\alpha$, averaging over fewer batches so the running covariance tracks the network more closely, up to the value at which $V/\alpha$ just meets the requirement:
+\begin{equation*}
+\alpha = \min\!\left(1,\ \frac{2 e_{\max}^2 V}{C^2}\right).
+\end{equation*}
+In the limit $\alpha = 1$, a single batch already provides enough samples to estimate the full covariance and no temporal averaging is needed.
+Together, these two rules spend each layer's samples where they are most useful: on larger blocks while full whitening is out of reach, and on faster updates once it is not.
+
+An additional benefit of the block-diagonal formulation is computational efficiency: with $M = C/c$ blocks, covariance computation costs $O(V C c)$ and inversion $O(C c^2)$, both linear in $C$ for a fixed block size, rather than $O(V C^2)$ and $O(C^3)$ for the full covariance, making BW practical for large-scale models.
+
+%
+%
+%
+%
+
+\subsection{Handling Correlated Channels}
+\todoinline{Review details}
+
+Whitening requires computing the inverse square root of the covariance matrix $\Sigma$ of the input channels. 
+If some channels are strongly correlated, $\Sigma$ becomes ill-conditioned or even singular, rendering the whitening transform $\Sigma^{-1/2}$ numerically unstable. 
+In extreme cases, near-perfect correlations correspond to very small eigenvalues, which amplify numerical errors when inverted~\cite{desjardins2015natural,huang2018decorrelated,ledoit2004well}.
+
+To resolve this, we inject a small independent perturbation into each channel. 
+Let $c$ be a vector representing one channel (or a block of channels), and let $\hat{c}$ be an independent random vector with the same variance as $c$. 
+We define a modified channel
+$
+\tilde{c} = \sqrt{1-\epsilon}\, c + \sqrt{\epsilon}\, \hat{c},
+$
+where $\epsilon \in (0,1)$ is chosen close to $0$ to effectively reduce correlations without significantly altering the channel variances.
+
+The covariance of $\tilde{c}$ is
+\begin{align*}
+\mathrm{Cov}&(\tilde{c}) 
+= \mathrm{Cov}\big(\sqrt{1-\epsilon}\, c + \sqrt{\epsilon}\, \hat{c}\big) \\
+&= (1-\epsilon)\, \mathrm{Cov}(c) + \epsilon\, \mathrm{Cov}(\hat{c}) 
+   + 2 \sqrt{(1-\epsilon)\epsilon}\, \mathrm{Cov}(c, \hat{c}) \\
+&= (1-\epsilon)\, \mathrm{Cov}(c) + \epsilon\, \mathrm{Var}(c)\, I,
+\end{align*}
+where the last equality follows from the independence of $c$ and $\hat{c}$, and the fact that $\hat{c}$ is drawn i.i.d.\ from the same distribution as $c$.
+
+\noindent In practice, this operation has the effect of shrinking the off-diagonal elements of $\mathrm{Cov}(c)$ by a factor of $1-\epsilon$ while preserving the diagonal variance:
+\begin{equation*}
+\mathrm{Cov}(\tilde{c})_{ij} = 
+\begin{cases} 
+\mathrm{Cov}(c)_{ii} & i = j \\
+(1-\epsilon)\, \mathrm{Cov}(c)_{ij} & i \neq j.
+\end{cases}
+\end{equation*}
+
+This simple shrinkage stabilizes the covariance, making it well-conditioned for inversion. 
+It can be viewed as a form of \emph{diagonal loading} or \emph{shrinkage regularization} commonly used in high-dimensional statistics~\citep{ledoit2004well,chen2010shrinkage}. 
+By controlling $\epsilon$, we balance between reducing correlations for numerical stability and preserving the original structure of the features. 
+This technique allows reliable whitening even when the original channels are highly correlated, such as in early layers of deep networks or for highly structured feature embeddings in language models.
+
+%
+%
+%
+%
+
+\subsection{Practical Batch Whitening (PBW)}
+
+In this section, we combine all the techniques introduced in the previous subsections into a single unified algorithm, Practical Batch Whitening (PBW).  
+PBW integrates the following components: (i) \emph{Reorder and Split}, (ii) \emph{Controlling Estimation Error}, and (iii) \emph{Handling Correlated Channels}.  
+
+\todoinline{This should be discussed in section "Controlling Estimation Error" where we also should discuss controlling the momentum.}
+After each iteration $n$, we update the running covariance block estimate for the next step:
+\begin{align*}
+\boldsymbol{\Sigma}^{(n)}_b = \text{stopgrad} [ (1 - \alpha) \cdot \boldsymbol{\Sigma}^{(n-1)}_b + \alpha \cdot \boldsymbol{\Sigma}_b ],
+\end{align*}
+where $\alpha$ is a small momentum parameter (e.g., $0.01$).  
+This is analogous to the running mean and variance in batch normalization, but extended to the covariance matrix domain.
+The key is that we pass $\boldsymbol{\Sigma}^{(n)}_b$ forward as a constant -- it stabilizes training but does not influence current gradients. 
+
+The final whitening matrix for each block is computed as $W_b = \Sigma_b^{-1/2}$, where $\Sigma^{(-b)}$ denotes the estimated covariance of block $b$ (after applying all the aforementioned techniques).  
+In practice, this matrix inversion can be efficiently implemented using either Newton iterations or Cholesky decomposition.
+
+Algorithm~\ref{alg:pbw} summarizes the complete Practical Batch Whitening (PBW) procedure for training, combining all the techniques described above into a single workflow.
+During inference, we apply whitening based solely on the accumulated running covariance and disable any updates to the running statistics.
+
+\begin{algorithm}[tb]
+\caption{Practical Batch Whitening (PBW)}
+\label{alg:pbw}
+\begin{algorithmic}
+\REQUIRE Input activations $X \in \mathbb{R}^{B \times W \times H \times C}$, 
+        previous covariance blocks $\{\boldsymbol{\Sigma}^{(n-1)}_b\}_{b=1}^M$, 
+        smoothing factor $\alpha$, noise $\epsilon$
+\STATE $c=$ \texttt{adaptive\_block\_size}($C$)
+\STATE Flatten spatial dimensions: $\tilde{X} \in \mathbb{R}^{(B \cdot W \cdot H) \times C}$
+\STATE Number of blocks: $M = C / c$
+\STATE Split channels to blocks: $\tilde{X} = [X_1, X_2, \dots, X_M]$
+\FOR{each block $b=1,\dots,M$ \textbf{in parallel}}
+    \STATE Compute block covariance: $\boldsymbol{\Sigma}_b = \texttt{cov}(X_b)$
+    \STATE Running cov: $\boldsymbol{\Sigma}_b^{\text{updated}} = \alpha \boldsymbol{\Sigma}^{(n-1)}_b + (1-\alpha) \boldsymbol{\Sigma}_b$
+    \STATE $\boldsymbol{\Sigma}_b^{\text{updated}} $ = \texttt{decorrelate\_channels}($\boldsymbol{\Sigma}_b^{\text{updated}}$, $\epsilon$)
+    \STATE Whitening matrix: $W_b = \left(\boldsymbol{\Sigma}_b^{\text{updated}}\right)^{-1/2}$
+    \STATE Apply whitening: $\tilde{X}_b \gets X_b W_b$
+    \STATE Temporal update: $\boldsymbol{\Sigma}_b^{(n)} = \texttt{stop\_grad} ( \boldsymbol{\Sigma}_b^{\text{updated}} )$
+\ENDFOR
+\STATE Concatenate blocks: $\tilde{X} = [\tilde{X}_1, \tilde{X}_2, \dots, \tilde{X}_M]$
+\STATE Reshape $\tilde{X}$ back to $B \times W \times H \times C$
+\STATE \textbf{return} $\tilde{X}$
+\end{algorithmic}
+\end{algorithm}

@@ -1,0 +1,87 @@
+\usepackage{xcolor}
+\usepackage{soul}
+\usepackage{tcolorbox}
+\usepackage{url}
+\tcbuselibrary{xparse}
+
+
+%% mini-todo "package" v1.17 
+%% Mickey Gabel
+%%
+%% To use:
+%% 1) input{mini-todo} in preamble.
+%%
+%% 2) You can use
+%%  \todo{what-to-do}                          (footnote)
+%%  \todoinline{what-to-do}                    (inline, supports line breaks)
+%%  \todohl{text-to-hightlight}{what-to-do}    (highlight text and footnote. put \cite{} commands in \mbox{...})
+%%  \todobox{what-to-do}                       (inline box, supports commands but no linebreak)
+%%  \begin{todopara} what to do \end{todopara} (as environment, supporting multiple paragraphs) 
+%%
+%% 3) If you don't like the color, change todocolor to something else.
+%%
+
+
+%% Select whether to enable/disable the todo system
+%% This is useful for figuring out missing space. 
+%% I still recommend removing the package commenting all todos before submitting
+\newif\ifenabletodo
+\enabletodotrue
+%\enabletodofalse
+
+
+\ifenabletodo
+
+\soulregister\cite7
+\soulregister\ref7
+\soulregister\pageref7
+\soulregister\eqref7
+\soulregister\url7
+
+
+\colorlet{todocolor}{green!50!black}
+
+\colorlet{todocolor}{green!50!black}
+\colorlet{todobg}{todocolor!30}
+
+\newcommand{\todofootnote}[1]{%
+{%\renewcommand{\thefootnote}{\Roman{footnote}}%
+ \color{todocolor}%
+ \footnote{\color{todocolor}\sffamily\textbf{[TODO]} #1}%
+ }}
+
+\newcommand{\todoo}[1]{%
+{\color{todocolor}%
+ \scriptsize \sffamily [TODO]\,\normalsize\todofootnote{#1}%
+}}
+\newcommand{\todohl}[2]{\sethlcolor{todobg}\texthl{#1}\,\todofootnote{#2}{}}
+
+
+\DeclareRobustCommand{\todoinline}[1]{%
+\sethlcolor{todobg}%
+\texthl{\sffamily\,\scriptsize{\color{todocolor} [TODO]} \footnotesize #1\,}%
+}
+
+\newtcbox{\todobox}{on line, colback=todobg, colframe=todocolor, size=fbox, boxsep=2pt, fontupper=\sffamily\footnotesize, title={[TODO]}, fonttitle=\scriptsize, attach title to upper={~~}, coltitle=todocolor}
+\newtcolorbox{todopara}[1][]{colback=todobg, colframe=todocolor, size=small, fontupper=\sffamily\footnotesize, title={[TODO]}, fonttitle=\scriptsize, attach title to upper={~~}, coltitle=todocolor,#1}
+
+
+%% Use to highlight changes
+\usepackage[normalem]{ulem} 
+\newcommand\removed[1]{\sout{\textcolor{green!50!black}{#1}}\,}
+\newcommand\added[1]{\textcolor{green!50!black}{#1}}
+
+\else
+
+
+\newcommand{\todofootnote}[1]{}
+\newcommand{\todo}[1]{}
+\newcommand{\todohl}[2]{#1}
+\newcommand{\todoinline}[1]{}
+\newcommand{\todobox}[1]{}
+
+\usepackage{version}
+\newenvironment*{todopara}{}{}
+\excludeversion {todopara}
+
+\fi

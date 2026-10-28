@@ -215,20 +215,25 @@ running_mean:
     cov centered about  mean_other
     cov_for_whitening = (1 - momentum) * running_cov + momentum * cov
 
-calibrated:
+calibrated (bw_calib_center="loo", the default):
+    current_mean      = mean_other                       # same as leave_one_out
+    cov centered about  mean_other
+    cov_for_whitening = boost_grad((1 - momentum) * running_cov + momentum * cov, 1 / momentum)
+
+calibrated (bw_calib_center="blend", runs away; comparison only):
     blended           = (1 - momentum) * running_mean + momentum * mean_other
     current_mean      = boost_grad(blended, 1 / momentum)
     cov centered about  blended                          # un-boosted
     cov_for_whitening = boost_grad((1 - momentum) * running_cov + momentum * cov, 1 / momentum)
 ```
 
-`boost_grad(t, s) = s * t - (s - 1) * t.detach()` leaves the forward value unchanged and multiplies the gradient by `s`. The history buffers are detached, so the boost only scales the gradient of the current-batch term: `momentum * (1 / momentum) = 1`, the same gradient strength as `leave_one_out`. The scale can be overridden with the module-level `STAT_GRAD_SCALE` in `model.py` (`None` means `1 / momentum`). The boost is skipped while `cov_warmup` is active.
+`boost_grad(t, s) = s * t - (s - 1) * t.detach()` leaves the forward value unchanged and multiplies the gradient by `s`. The history buffers are detached, so the boost only scales the gradient of the current-batch term: `momentum * (1 / momentum) = 1`, the same gradient strength as `leave_one_out`. The scale is set with `bw_grad_scale` (0 means the per-mode default: `1 / momentum` for `calibrated`, 1 otherwise; an explicit value applies to every mode). The boost is skipped while `cov_warmup` is active.
 
 | Mode | Training mean subtracted | Training covariance used | Gradient boost | Updates `running_mean`? | Updates `running_cov`? |
 |------|--------------------------|--------------------------|----------------|--------------------------|------------------------|
 | `leave_one_out` | `mean_other` | Current leave-one-out covariance | No (not needed, coefficient is already 1) | Yes, copies current batch mean | Yes, copies current leave-one-out covariance |
 | `running_mean` | `mean_other` | `(1 - momentum) * running_cov + momentum * cov` | No | Yes, EMA update (used only at inference) | Yes, EMA update |
-| `calibrated` | `(1 - momentum) * calibrated_running_mean + momentum * mean_other` | `(1 - momentum) * calibrated_running_cov + momentum * cov`, with `cov` centered about the blended mean | Yes, `1 / momentum` on mean and covariance | No, after calibration disables mean updates | No, after calibration disables covariance updates |
+| `calibrated` | `mean_other` (default `bw_calib_center="loo"`) | `(1 - momentum) * calibrated_running_cov + momentum * cov`, with `cov` centered about `mean_other` | Yes, `1 / momentum` on the covariance | No, after calibration disables mean updates | No, after calibration disables covariance updates |
 
 The reasons for these choices are in [Why the modes center and boost the way they do](#why-the-modes-center-and-boost-the-way-they-do).
 
@@ -279,7 +284,7 @@ For mean-only centering, the same flow calibrates `running_mean`; there is no co
 | Mean-only `calibrated` | Subtracts mix of calibrated mean and leave-one-out mean. Does not update mean. | Subtracts calibrated mean. |
 | Full BW `leave_one_out` | Uses current leave-one-out mean/cov selected by `batch_center_mode="leave_one_out"`. Stores current stats. | Uses last stored mean/cov. |
 | Full BW `running_mean` | Centers with the leave-one-out mean; whitens with running covariance blended with the current leave-one-out covariance. Updates running mean/cov. | Uses stored running mean/cov. |
-| Full BW `calibrated` | Uses calibrated mean mixed with leave-one-out mean and calibrated covariance, with the current-batch gradient boosted by `1/momentum`. Does not update mean/cov after calibration. | Uses calibrated mean and calibrated covariance. |
+| Full BW `calibrated` | Centers with the leave-one-out mean; whitens with the calibrated covariance blended with the current covariance, whose gradient is boosted by `1/momentum`. Does not update mean/cov after calibration. | Uses calibrated mean and calibrated covariance. |
 
 ## Short Interpretation
 
@@ -287,7 +292,7 @@ For mean-only centering, the same flow calibrates `running_mean`; there is no co
 
 `running_mean` (full BW) centers exactly like `leave_one_out` and pools only the covariance over iterations through the EMA buffer. Its `running_mean` buffer is still updated, but only for inference.
 
-`calibrated` refreshes `running_mean` and `running_cov` from extra calibration batches at the current weights before each step, then prevents the training batch from overwriting them. Because the current batch only enters with weight `momentum`, its gradient is boosted by `1/momentum`.
+`calibrated` refreshes `running_mean` and `running_cov` from extra calibration batches at the current weights before each step, then prevents the training batch from overwriting them. It centers with the leave-one-out mean, like the other modes; only the covariance uses the calibrated history. Because the current batch only enters the covariance with weight `momentum`, its gradient is boosted by `1/momentum`.
 
 ### Why the modes center and boost the way they do
 
@@ -326,11 +331,27 @@ The boost is not applied because it only gives the right gradient when the histo
 
 The `running_mean` buffer is also not used for training centering because, at `momentum=0.1`, it lags the current activations by roughly 9–12 steps. Measured drift is 0.025 after 1 step and 0.20 after 10 steps, against a 0.01 noise floor. For the batch sizes used here, the best pooling window for the mean was a single batch.
 
-#### Why `calibrated` keeps the blended mean with a boost
+#### Why `calibrated` centers with the leave-one-out mean (blended centering breaks it)
+
+`calibrated` used to center with the blended mean `(1 - momentum) * calibrated_mean + momentum * mean_other`, with the covariance taken about that same blended mean (`cdcba46`). That variant, now `bw_calib_center="blend"`, **does not train**: the BW input RMS runs away in every full run, at every boost level. The default is therefore `bw_calib_center="loo"`.
+
+Full 5000-step runs, group 16, dropout 0 (mean train loss over the run; LayerNorm baseline 0.49):
+
+| `bw_calib_center` | Boost | Mean loss | BW input RMS at step 5000 |
+|---|---|---|---|
+| `blend` | 1 / 5 / 15 | 1.69 / 2.36 / 2.00 | 152 / 21,386 / 2,221 (runaway) |
+| `blend` (group 384) | 1 | 1.57 | 42 (runaway); boost 10 diverged earlier (job 20485382) |
+| `blend_loo_cov` (pre-`cdcba46`), no warmup | 10 | 0.696 | 2.6 |
+| `loo` | 1 | 0.686 | 1.8 |
+| `loo` | 10 (default) | **0.605** | 2.1 |
+
+wandb names `gb1-cal-*`, `gb2-cal-*`. With `loo`, the boost works as the theory below predicts: 10 beats 1. `calibrated` still only ties `leave_one_out` at group 16 (0.605) at ~7× the run time, and at group 384 with `fix_factor` 0.8 it reaches 0.736 (`gb4-cal-gs384-loo-gb10-ff0.8`) against 0.428 for `leave_one_out`.
+
+The text below is the original reasoning for the blended mean. The radial-gradient measurement was a single-step check; it did not catch the runaway that shows up over a full run.
 
 Calibration recomputes `running_mean`/`running_cov` at the current weights from `bw_iter_calibration_num_batches` batches. That makes the blended mean an almost fresh estimate, and the `1/momentum` boost brings the current-batch gradient back to `leave_one_out` strength. The remaining radial gradient (0.04) grows with how stale the history is: 0.12 at 5% lag, 0.23 at 10%, 0.77 at 30%. So the boost is valid only because calibration keeps the history close to the current weights. The final calibrated train loss was 0.117 (job 19548573), versus 0.106 for `leave_one_out`.
 
-In `calibrated` only, the covariance is centered about the same blended mean that centers the data. The second moment of the centered data is `Sigma + d d^T`, with `d` the centering error, so this makes the covariance consistent with what is actually whitened. It is not done for `running_mean`: there the `d d^T` term would accumulate in the EMA buffer (measured ~22% inflation of `running_cov`), and that variant trained worse (job 19560085: 1.65 versus 1.44). `calibrated` overwrites its buffer from the calibration pass, so nothing accumulates. The run 19548573 predates this centering change, so `calibrated` with it has not yet been validated in a full run.
+In `calibrated` only, the covariance is centered about the same blended mean that centers the data. The second moment of the centered data is `Sigma + d d^T`, with `d` the centering error, so this makes the covariance consistent with what is actually whitened. It is not done for `running_mean`: there the `d d^T` term would accumulate in the EMA buffer (measured ~22% inflation of `running_cov`), and that variant trained worse (job 19560085: 1.65 versus 1.44). `calibrated` overwrites its buffer from the calibration pass, so nothing accumulates. The run 19548573 predates this centering change. Validated later in full runs: it runs away (see the table above).
 
 #### Small batches
 

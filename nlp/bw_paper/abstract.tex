@@ -1,0 +1,16 @@
+\begin{abstract}
+
+\todoinline{1. Experiments for vision + comparison to cho2021improving\\
+2. LLM experiments. GPT2 is preferred over nanoGPT \\
+3. Ablation study + observing the condition number w/ and w/o BW.
+3. Complete missing sections}
+
+Batch Whitening (BW) improves optimization by decorrelating feature channels, but its adoption in large-scale models, particularly LLMs, has been limited by statistical, structural, and causal challenges.
+In this work, we introduce a stable and scalable BW framework for both vision and language models.
+For vision, we propose three complementary techniques -- Reorder \& Split, Controlling Estimation Error, and Handling Correlated Channels -- that improve whitening performance and reduce estimation noise.
+Building on these insights, we develop Causal Batch Whitening (CBW) for autoregressive LLMs, preserving causality while maintaining computational efficiency and reliable covariance estimation.
+Our approach integrates naturally with modern deep learning architectures, improving optimization stability, gradient isotropy, and downstream performance.
+Extensive empirical evaluation demonstrates that BW and CBW achieve competitive or superior results compared to LayerNorm, GroupNorm, and prior whitening methods.
+
+
+\end{abstract}

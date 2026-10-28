@@ -244,9 +244,35 @@ def batch_orthonorm(
     update_running_stats=True,
     update_running_cov_stats=True,
     center_mode="running_mean",
+    warmup_ema_buffer=False,
+    inference_ema=False,
+    grad_scale=None,
+    calib_center="loo",
 ):
     """
     Fully vectorized block whitening for X of shape (B, T, C).
+
+    calib_center (calibrated only): "loo" (default) centers data and
+        covariance with the leave-one-out mean, keeping only the calibrated
+        covariance as history. "blend" centers both with
+        (1-m)*calibrated + m*leave-one-out mean; the mostly detached centering
+        mean breaks scale invariance, as in running_mean before cdcba46, and the
+        BW input RMS runs away (150-21,000 by step 5000 at any boost). Kept for
+        comparison only. "blend_loo_cov" centers the data with the blended mean
+        but the covariance about the leave-one-out mean (the pre-cdcba46
+        behaviour); stable, but worse than "loo".
+
+    grad_scale: gradient boost on the current-batch statistics (forward pass
+        unchanged). None keeps the per-mode default (1/momentum for calibrated,
+        1 otherwise). An explicit value applies to every mode: the mean and
+        covariance in calibrated, the covariance in running_mean and
+        leave_one_out (their centering mean already carries the full gradient).
+
+    warmup_ema_buffer: during cov_warmup, still EMA-accumulate the full
+        covariance into running_cov (only the whitening uses the diagonal
+        blend), so the history is complete when warmup ends.
+    inference_ema: in leave_one_out mode, keep EMA buffers for inference
+        instead of copying the last training batch. Training is unchanged.
     No loops. Running stats updated correctly. Whitening is correct.
     """
     B, T, C = X.shape
@@ -270,7 +296,11 @@ def batch_orthonorm(
     # boost restore a real derivative. running_mean's history is a stale EMA
     # that does not respond to this step; boosting it overstates the gradient
     # 1/momentum-fold and makes the activations run away.
-    if center_mode == "calibrated":
+    if calib_center not in ("blend", "blend_loo_cov", "loo"):
+        raise ValueError(f"Unknown calib_center: {calib_center}")
+    if grad_scale is not None:
+        stat_grad_scale = float(grad_scale)
+    elif center_mode == "calibrated":
         stat_grad_scale = (
             STAT_GRAD_SCALE if STAT_GRAD_SCALE is not None else 1.0 / momentum
         )
@@ -334,7 +364,8 @@ def batch_orthonorm(
         count_other = (B - 1) * T
         mean_other = (sum_all_flat - sum_per_seq) / count_other
 
-        if center_mode in ("leave_one_out", "running_mean"):
+        if center_mode in ("leave_one_out", "running_mean") or (
+                center_mode == "calibrated" and calib_center == "loo"):
             # running_mean also centers with the full-gradient leave-one-out
             # mean; only its covariance is pooled over iterations. A detached
             # (blended) centering mean makes the output c*L^-1 x - L^-1 m under
@@ -351,16 +382,15 @@ def batch_orthonorm(
             ) * running_mean.view(
                 1, 1, n_groups, group_size
             ) + momentum * mean_other
-            # The covariance is taken about the same mean that centers the data,
-            # which makes it an unbiased estimate of the centered second moment.
-            # Safe here because calibrated overwrites running_cov from its
-            # calibration pass instead of accumulating an EMA; in an EMA the
-            # rank-1 centering-error terms would pile up and inflate the buffer.
+            # calib_center="blend" (not the default): the covariance is taken
+            # about the same mean that centers the data. Although calibrated
+            # overwrites running_cov instead of accumulating an EMA, this runs
+            # away in full training at every boost level; use "loo".
             # Un-boosted on purpose: boost_grad is forward-identity, so reusing
             # the boosted current_mean would leave the forward pass unchanged
             # while routing the covariance gradient through the mean's gradient
             # scaling as well.
-            center_for_cov = current_mean
+            center_for_cov = mean_other if calib_center == "blend_loo_cov" else current_mean
             if not cov_warmup:
                 current_mean = boost_grad(current_mean, stat_grad_scale)
         else:
@@ -438,7 +468,7 @@ def batch_orthonorm(
 
         if center_mode == "leave_one_out":
             # Full current-batch covariance, coefficient 1.0 (full gradient).
-            cov_for_whitening = cov
+            cov_for_whitening = cov if stat_grad_scale == 1.0 else boost_grad(cov, stat_grad_scale)
         elif cov_warmup:
             # Warmup: diagonally-dominant blend of the current-batch covariance.
             eye4 = torch.eye(group_size, device=device, dtype=dtype).view(
@@ -465,7 +495,8 @@ def batch_orthonorm(
             # just written to make the mean/cov handling parallel.
             mean_loo = mean_other.mean(dim=(0, 1))  # (n_groups, G)
             # Only update running_mean if enabled (disabled when using calibration)
-            if center_mode == "leave_one_out":
+            copy_last_batch = center_mode == "leave_one_out" and not inference_ema
+            if copy_last_batch:
                 running_mean.copy_(mean_loo.view(1, n_groups, group_size))
             elif update_running_stats:
                 running_mean.mul_(1 - momentum).add_(
@@ -473,10 +504,11 @@ def batch_orthonorm(
                 )
 
             # Only update running_cov if enabled (disabled when using calibration).
-            if center_mode == "leave_one_out":
+            if copy_last_batch:
                 running_cov.copy_(cov)
             elif update_running_cov_stats:
-                if cov_warmup:
+                if (cov_warmup and not warmup_ema_buffer
+                        and center_mode != "leave_one_out"):
                     diag = torch.eye(group_size, device=device, dtype=dtype)
                     x_var = diag.view(1, 1, group_size, group_size) * cov
                     running_cov.copy_(
@@ -597,7 +629,9 @@ class BatchWhiteningBlock(nn.Module):
     # num_features: the number of outputs for a fully connected layer or the
     # number of output channels for a convolutional layer. num_dims: 2 for a
     # fully connected layer and 4 for a convolutional layer
-    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean",group_size=None):
+    def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean",group_size=None,
+                 fix_factor=0.9, warmup_ema_buffer=False, inference_ema=False, grad_scale=None,
+                 calib_center="loo"):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
@@ -606,7 +640,11 @@ class BatchWhiteningBlock(nn.Module):
         self.eps = eps
         self.center_mode = center_mode
         self.cov_warmup=True
-        self.fix_factor = 0.9
+        self.fix_factor = fix_factor
+        self.warmup_ema_buffer = warmup_ema_buffer
+        self.inference_ema = inference_ema
+        self.grad_scale = grad_scale
+        self.calib_center = calib_center
         self.gamma = nn.Parameter(torch.ones(num_features))
         # The variables that are not model parameters are initialized to 0 and 1
 
@@ -727,6 +765,10 @@ class BatchWhiteningBlock(nn.Module):
             update_running_stats=self.update_running_stats,
             update_running_cov_stats=self.update_running_cov_stats,
             center_mode=self.center_mode,
+            warmup_ema_buffer=self.warmup_ema_buffer,
+            inference_ema=self.inference_ema,
+            grad_scale=self.grad_scale,
+            calib_center=self.calib_center,
             training_mode=True if self.collect_calib_stats else None)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
@@ -827,8 +869,14 @@ def _make_norm_layer(config, layer_norm_fallback=True):
     if config.normalization_type == "full_bw":
         return BatchWhiteningBlock(
             config.n_embd,
+            momentum=config.bw_momentum,
             center_mode=config.batch_center_mode,
             group_size=config.bw_group_size,
+            fix_factor=config.bw_fix_factor,
+            warmup_ema_buffer=(config.bw_warmup == "diag_ema"),
+            inference_ema=config.bw_inference_ema,
+            grad_scale=config.bw_grad_scale or None,
+            calib_center=config.bw_calib_center,
         )
     elif config.normalization_type == "center_only":
         return BatchCenterBlock(config.n_embd, center_mode=config.batch_center_mode)
@@ -896,6 +944,22 @@ class GPTConfig:
     # get_batch_whitening_config(). Set to n_embd to disable grouping (a single
     # full C x C covariance), which is useful for whitening-correctness tests.
     bw_group_size: int = None
+    # BW momentum: weight of the current batch in the running statistics.
+    bw_momentum: float = 0.1
+    # Off-diagonal covariance shrinkage (1 - epsilon in the paper).
+    bw_fix_factor: float = 0.9
+    # Covariance warmup until the first eval: "diag" (diagonal-dominant whitening,
+    # buffer overwritten), "diag_ema" (same whitening, buffer EMA-accumulates the
+    # full covariance), or "none".
+    bw_warmup: str = "diag"
+    # leave_one_out only: EMA buffers for inference instead of the last batch.
+    bw_inference_ema: bool = False
+    # Gradient boost on the current-batch BW statistics. 0 -> per-mode default
+    # (1/momentum for calibrated, 1 otherwise).
+    bw_grad_scale: float = 0.0
+    # calibrated only: "loo", "blend_loo_cov", or "blend" (see batch_orthonorm).
+    # "blend" makes the activations run away; kept only for comparison.
+    bw_calib_center: str = "loo"
     # Deprecated compatibility field for older checkpoints/configs.
     batch_whitening: bool = None
 
@@ -975,8 +1039,11 @@ class GPT(nn.Module):
         # When the model only has BatchCenterBlock layers (centering-only modes),
         # there is no warmup phase, so all batch_center_mode options behave
         # consistently from iter 0 (no jump in the calibrated mode at iter == eval_interval).
-        has_cov_warmup_layers = any(hasattr(layer, 'cov_warmup') for layer in self.bw_layers)
-        self.curr_cov_warmup = has_cov_warmup_layers
+        has_cov_warmup_layers = (
+            any(hasattr(layer, 'cov_warmup') for layer in self.bw_layers)
+            and config.bw_warmup != "none"
+        )
+        self.curr_cov_warmup = None  # force the layers to take the initial value
         self.set_bw_cov_warmup(has_cov_warmup_layers)
 
     def _get_bw_layers(self):
