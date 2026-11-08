@@ -1,0 +1,4 @@
+mps-a --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --max_iters=400 --wandb_log=False --log_conditioning=False --eval_interval=1000
+mps-b --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --max_iters=400 --wandb_log=False --log_conditioning=False --eval_interval=1000
+mps-c --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --max_iters=400 --wandb_log=False --log_conditioning=False --eval_interval=1000
+mps-d --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --max_iters=400 --wandb_log=False --log_conditioning=False --eval_interval=1000

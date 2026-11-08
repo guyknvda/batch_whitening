@@ -3,6 +3,7 @@
 Usage: python make_bw_report.py /tmp/compare_exp.json
        python make_bw_report.py --dropout /tmp/compare_drop.json
        python make_bw_report.py --boost /tmp/compare_exp.json /tmp/compare_drop.json /tmp/compare_gb.json
+       python make_bw_report.py --renorm /tmp/compare_rn1-.json /tmp/compare_exp2-.json /tmp/compare_exp3-.json
 Replaces everything between <!--RESULTS--> and <!--/RESULTS--> (or the
 <!--DROPOUT--> markers) in the report.
 """
@@ -398,7 +399,110 @@ Green = best in the row; red = diverged or stalled (mean loss &ge; 1.0 without d
 <!--/BOOST-->"""
 
 
+RN_LOO = ["rn1-loo-gs384-ff0.8", "rn1-loo-gs384-ff0.8-s1", "rn1-loo-gs384-ff0.8-s2"]
+RN_RM = ["rn1-rm-gs384-mom0.7", "rn1-rm-gs384-mom0.7-s1", "rn1-rm-gs384-mom0.7-s2"]
+LK_LOO = ["exp2-loo-gs384-ff0.8", "exp3-loo-gs384-ff0.8-s1", "exp3-loo-gs384-ff0.8-s2"]
+LK_RM = ["exp3-rm-gs384-mom0.7"]
+RN_CHART = [
+    ("leave_one_out, group 384, fix_factor 0.8, renorm", RN_LOO, "#1a7f37"),
+    ("running_mean, group 384, momentum 0.7, renorm", RN_RM, "#8250df"),
+    ("leave_one_out, group 384, fix_factor 0.8, leaky (before)", LK_LOO, "#afb8c1"),
+]
+
+
+def renorm_section(d):
+    def per_run(names):
+        rows = []
+        for n in names:
+            its, tr, va = d[n]["iter"], d[n]["train"], d[n]["val"]
+            rows.append([np.mean(tr[1:])] + [steps_to(its, tr, t) for t in THRESHOLDS] + [tr[-1], min(va)])
+        return np.array(rows)
+
+    base = per_run(BASE)
+    bmean = base.mean(axis=0)
+
+    def row(label, names, is_base=False):
+        a = per_run(names)
+        m = a.mean(axis=0)
+        rng = lambda j, f: f"{m[j]:{f}}" + (
+            f' <span class="rng">({a[:, j].min():{f}}&ndash;{a[:, j].max():{f}})</span>' if len(a) > 1 else "")
+        rel = "&mdash;" if is_base else f"{100 * (m[0] / bmean[0] - 1):+.1f}%".replace("-", "&minus;")
+        steps = "".join(
+            f'<td class="num">{m[j]:.0f}' + ("" if is_base else
+            f' <span class="rng">({100 * (m[j] / bmean[j] - 1):+.0f}%)</span>'.replace("-", "&minus;")) + "</td>"
+            for j in range(1, 5))
+        better = lambda j: "" if is_base or m[j] >= bmean[j] else " better"
+        cls = ' class="baseline"' if is_base else ""
+        return (f'<tr{cls}><td>{label}</td><td class="num">{len(a)}</td><td class="num{better(0)}">{rng(0, ".3f")}</td>'
+                f'<td class="num{better(0)}">{rel}</td>{steps}<td class="num">{rng(5, ".4f")}</td>'
+                f'<td class="num{better(6)}">{rng(6, ".3f")}</td></tr>')
+
+    rn_loo, rn_rm, lk_loo = (per_run(n).mean(axis=0) for n in (RN_LOO, RN_RM, LK_LOO))
+    rows = "\n".join([
+        row("Baseline: LayerNorm", BASE, True),
+        row("<b>leave_one_out, group 384, fix_factor 0.8, renorm</b>", RN_LOO),
+        row("<b>running_mean, group 384, momentum 0.7, renorm</b>", RN_RM),
+        row("leave_one_out, group 384, fix_factor 0.8, leaky (before)", LK_LOO),
+        row("running_mean, group 384, momentum 0.7, leaky (before)", LK_RM),
+    ])
+    pct = lambda v, b: f"{100 * (1 - v / b):.0f}%"
+    return f"""<!--RENORM-->
+<h2 id="renorm">Causal BW without the leak (fix option 1, <code>bw_renorm</code>)</h2>
+<p class="sub">Question: once the <a href="#leak">future-token leak</a> is removed, does BW still beat the no-dropout LayerNorm baseline?
+The two best dropout-0 configurations rerun with <code>bw_renorm=True</code>, 3 seeds each, about 6 minutes per run on 1 GPU (wandb names <code>rn1-*</code>).</p>
+
+<h3>How option 1 works</h3>
+<p>Until now the training forward pass whitened each sequence with statistics of the <i>current</i> batch (leave-one-out mean and covariance, partly blended with history in <code>running_mean</code>). That is what lets information cross between sequences and, through two stacked layers, come back as the sequence's own future. Inference was already causal: it whitens with the stored buffers.</p>
+<p>Option 1 is Batch Renormalization (Ioffe, 2017) applied to whitening:</p>
+<ul class="summary">
+  <li><b>Forward pass: the stored statistics.</b> Each BW layer whitens with the running mean <i>&mu;<sub>R</sub></i> and the Cholesky factor <i>L<sub>R</sub></i> of the running covariance, as they were <i>before</i> this batch: <i>y</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>x</i>&nbsp;&minus;&nbsp;<i>&mu;<sub>R</sub></i>). This is exactly what inference computes, so training and evaluation run the same function, and no current-batch value enters the forward pass.</li>
+  <li><b>Buffers: updated as before, after the forward pass.</b> <code>leave_one_out</code> copies this batch's statistics, so the next step whitens with statistics one step old. <code>running_mean</code> keeps its EMA (momentum 0.7 here).</li>
+  <li><b>Gradient: through the current batch.</b> The layer is written as <i>y</i>&nbsp;=&nbsp;<i>R</i>&nbsp;<i>L<sub>B</sub></i><sup>&minus;1</sup>(<i>x</i>&nbsp;&minus;&nbsp;<i>&mu;<sub>B</sub></i>)&nbsp;+&nbsp;<i>d</i>. Here <i>&mu;<sub>B</sub></i>, <i>L<sub>B</sub></i> are the current-batch statistics the mode used before (with gradient), and <i>R</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup><i>L<sub>B</sub></i>, <i>d</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>&mu;<sub>B</sub></i>&nbsp;&minus;&nbsp;<i>&mu;<sub>R</sub></i>) are held constant. Substituting gives back <i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>x</i>&nbsp;&minus;&nbsp;<i>&mu;<sub>R</sub></i>), so the value is unchanged. The backward pass, though, sees the dependence of the statistics on the inputs, as batch normalization does. That matters: with that dependence removed (a fully detached mean) the activations ran away in earlier experiments.</li>
+  <li><b>Exact, not approximate.</b> The code returns <code>Y_R + (Z - Z.detach())</code>, with <code>Y_R</code> the whitening with stored statistics and <code>Z</code> the expression above. The forward value is bit-for-bit <code>Y_R</code>, so not even rounding error from the current batch gets in.</li>
+  <li><b>Cost:</b> one extra Cholesky factorization and three triangular solves per layer. Run time is unchanged (about 6 minutes for 5000 steps).</li>
+</ul>
+<p>Every run passed the startup check in <code>train.py</code> with a leak of exactly 0, and <code>test_batch_orthonorm.py</code> confirms 0 for 2 and 3 stacked layers in both modes.</p>
+
+<h3>Results</h3>
+<table>
+<tr><th rowspan="2">Configuration</th><th rowspan="2" class="num">Seeds</th><th rowspan="2" class="num">Mean loss</th><th rowspan="2" class="num">vs. baseline</th>
+<th colspan="4" style="text-align:center">Steps to reach train loss (vs. baseline)</th><th rowspan="2" class="num">Final loss</th><th rowspan="2" class="num">Best val</th></tr>
+<tr>{"".join(f'<th class="num">{t}</th>' for t in THRESHOLDS)}</tr>
+{rows}
+</table>
+<p class="cap">Mean over seeds, (min&ndash;max) when there are several. All losses are eval mode, so the leaky rows are not inflated by the leak. Mean loss = average train loss over all evals (area under the curve). Bold green = better than the baseline.</p>
+
+{chart(d, BASE, RN_CHART)}
+<p class="cap">Train loss relative to the baseline (mean of 3 seeds), measured in eval mode every 250 steps. Below 0% = better than the baseline.</p>
+
+{learning_curves(d, BASE, RN_CHART[:2], [0.05, 0.1, 0.2, 0.5, 1, 2, 3])}
+<p class="cap">Learning curves: train loss (eval mode, mean over 3 seeds) on a log axis. Neither renorm configuration reaches the baseline's final loss ({speedups(d, BASE, RN_CHART[:2])[0]:.4f}) within 5000 steps, so unlike the leaky runs there is no end-of-training speed-up to mark.</p>
+
+<h3>Conclusions</h3>
+<ul class="summary">
+  <li><b>Causal BW still beats the baseline, by about half as much as the leaky version.</b> Mean loss is {pct(rn_loo[0], bmean[0])} lower with <code>leave_one_out</code> and {pct(rn_rm[0], bmean[0])} lower with <code>running_mean</code>, on every seed, against {pct(lk_loo[0], bmean[0])} for the leaky version.</li>
+  <li><b>The gain is early.</b> Renorm reaches loss 1.0 {pct(rn_loo[1], bmean[1])} sooner (<code>leave_one_out</code>) and 0.5 {pct(rn_loo[2], bmean[2])} sooner, ties at 0.2, and is slightly later at 0.1. The final loss is a little worse than the baseline's.</li>
+  <li><b>Validation does not suffer.</b> The best validation loss of renorm <code>running_mean</code> ({rn_rm[6]:.3f}) is the lowest in the table. The leaky runs were the worst ({lk_loo[6]:.3f}).</li>
+  <li><b><code>running_mean</code> and <code>leave_one_out</code> are now level.</b> With renorm both whiten with recent stored statistics and differ only in how fast the buffer moves.</li>
+  <li><b>Open question:</b> how much of the lost half was the leak and how much is the cost of whitening with one-step-old statistics. Options 2 and 3 keep current-batch statistics in the forward pass and would separate the two.</li>
+</ul>
+<!--/RENORM-->"""
+
+
 def main():
+    if sys.argv[1] == "--renorm":
+        d = {}
+        for f in sys.argv[2:]:
+            d.update(json.load(open(f)))
+        html = renorm_section(d)
+        s = open(REPORT).read()
+        if "<!--/RENORM-->" in s:
+            s = re.sub(r"<!--RENORM-->.*?<!--/RENORM-->", lambda _: html, s, count=1, flags=re.S)
+        else:
+            s = s.replace("<!--RENORM-->", html, 1)
+        open(REPORT, "w").write(s)
+        print("wrote", REPORT)
+        return
     if sys.argv[1] == "--boost":
         d = {}
         for f in sys.argv[2:]:

@@ -227,6 +227,62 @@ def boost_grad(t, scale):
     return scale * t - (scale - 1.0) * t.detach()
 
 
+def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_factor,
+                         cov_warmup, center_mode, stat_grad_scale, warmup_ema_buffer,
+                         update_running_stats, update_running_cov_stats):
+    """renorm with whole-batch gradient statistics (renorm_stats="batch").
+
+    The forward value is the whitening with the stored buffers, so the current
+    batch only shapes the gradient; nothing there needs to exclude a sequence's
+    own tokens. One mean and covariance per group replace the B leave-one-out
+    ones, and the whitening is applied as a matrix product instead of B
+    triangular solves. calibrated takes the running_mean branch; its buffers
+    hold the calibration statistics and are not updated here (the update flags
+    are off outside calibration).
+    """
+    B, T, n_groups, G = Xg.shape
+    eye = torch.eye(G, device=Xg.device, dtype=Xg.dtype).view(1, 1, G, G)
+    mu_R = running_mean.detach().clone()  # (1, ng, G)
+    cov_R = running_cov.detach().clone()  # (1, ng, G, G)
+
+    mu_B = Xg.mean(dim=(0, 1)).unsqueeze(0)  # (1, ng, G)
+    Xc = Xg - mu_B.unsqueeze(1)
+    cov = torch.einsum("btgc,btgd->gcd", Xc, Xc).unsqueeze(0) / (B * T) + eps * eye
+
+    if center_mode == "leave_one_out":
+        cov_w = cov if stat_grad_scale == 1.0 else boost_grad(cov, stat_grad_scale)
+    elif cov_warmup:
+        cov_w = (1 - momentum) * eye * cov + momentum * cov
+    else:
+        cov_w = boost_grad((1 - momentum) * cov_R + momentum * cov, stat_grad_scale)
+
+    L_B = torch.linalg.cholesky(fix_cov(cov_w, fix_factor))
+    W_B = torch.linalg.solve_triangular(L_B, eye.expand_as(L_B), upper=False)
+    with torch.no_grad():
+        W_R = torch.linalg.solve_triangular(
+            torch.linalg.cholesky(fix_cov(cov_R, fix_factor)), eye.expand_as(cov_R), upper=False)
+        R = W_R @ L_B
+        d = torch.einsum("xgij,xgj->xgi", W_R, mu_B - mu_R)
+        Y_R = torch.einsum("gij,btgj->btgi", W_R[0], Xg - mu_R.unsqueeze(1))
+    M = R @ W_B  # value W_R, gradient through the batch statistics
+    Z = torch.einsum("gij,btgj->btgi", M[0], Xc) + d.unsqueeze(1)
+    Y = Y_R + (Z - Z.detach())
+
+    with torch.no_grad():
+        if center_mode == "leave_one_out":
+            running_mean.copy_(mu_B)
+            running_cov.copy_(cov)
+        else:
+            if update_running_stats:
+                running_mean.mul_(1 - momentum).add_(momentum * mu_B)
+            if update_running_cov_stats:
+                if cov_warmup and not warmup_ema_buffer:
+                    running_cov.copy_((1 - momentum) * eye * cov + momentum * cov)
+                else:
+                    running_cov.mul_(1 - momentum).add_(momentum * cov)
+    return Y.reshape(B, T, n_groups * G)
+
+
 def batch_orthonorm(
     X,
     gamma=None,
@@ -248,9 +304,26 @@ def batch_orthonorm(
     inference_ema=False,
     grad_scale=None,
     calib_center="loo",
+    renorm=False,
+    renorm_stats="loo",
 ):
     """
     Fully vectorized block whitening for X of shape (B, T, C).
+
+    renorm: causal training forward (Batch Renormalization, Ioffe 2017, applied
+        to whitening). Any current-batch statistic in the forward pass breaks
+        causality once two BW layers are stacked, even leave-one-out: layer k
+        writes sequence b's future tokens into sequence s's activations, and
+        layer k+1 reads them back into b's statistics. With renorm the forward
+        value is exactly the whitening with the buffers from previous
+        iterations (what inference computes), while the gradient still flows
+        through the current-batch mean and covariance, as
+        R L_B^-1 (x - mu_B) + d with R = L_R^-1 L_B and d = L_R^-1 (mu_B - mu_R)
+        held constant.
+    renorm_stats (renorm only): "loo" takes the gradient statistics per
+        sequence from the other sequences, as without renorm; "batch" uses one
+        whole-batch mean and covariance, which renorm keeps causal because they
+        never reach the forward value. "batch" is much cheaper.
 
     calib_center (calibrated only): "loo" (default) centers data and
         covariance with the leave-one-out mean, keeping only the calibrated
@@ -329,6 +402,25 @@ def batch_orthonorm(
             .view(1, 1, group_size, group_size)
             .repeat(1, n_groups, 1, 1)
         )
+    renorm = renorm and training and not full_mode
+    if renorm_stats not in ("loo", "batch"):
+        raise ValueError(f"Unknown renorm_stats: {renorm_stats}")
+    if renorm and renorm_stats == "batch":
+        if center_mode not in ("leave_one_out", "running_mean", "calibrated"):
+            raise ValueError("renorm_stats='batch' supports leave_one_out, running_mean and calibrated")
+        Y = _renorm_batch_whiten(
+            X.view(B, T, n_groups, group_size), running_mean, running_cov, eps,
+            momentum, fix_factor, cov_warmup, center_mode, stat_grad_scale,
+            warmup_ema_buffer, update_running_stats, update_running_cov_stats)
+        if gamma is not None:
+            Y = Y * gamma.view(1, 1, -1)
+        if beta is not None and bias:
+            Y = Y + beta.view(1, 1, -1)
+        return Y, running_mean.detach(), running_cov.detach(), gamma, beta
+    if renorm:
+        # Buffers as they were before this batch updates them in place.
+        prev_mean = running_mean.detach().clone().view(1, 1, n_groups, group_size)
+        prev_cov = running_cov.detach().clone()
     if training and not full_mode:
         running_cov = running_cov.expand(cov_shape).clone()
 
@@ -437,16 +529,24 @@ def batch_orthonorm(
         # leave_one_out mode; the term only bites when the running mean is
         # stale. A per-token leave-one-out mean instead shrinks the covariance
         # and over-scales the whitened output.
-        X_other_centered = Xg.unsqueeze(0) - center_for_cov.unsqueeze(1)
-        diag_mask = torch.eye(
-            B, dtype=torch.bool, device=device
-        ).view(B, B, 1, 1, 1)
-        X_other_centered = X_other_centered.masked_fill(diag_mask, 0.0)
+        # Built from per-sequence Gram matrices instead of a (B, B, T, C)
+        # tensor: for sequence b with center c_b and the other sequences' sum
+        # S_b and Gram G_b, sum_{s!=b} (x - c_b)(x - c_b)^T
+        # = G_b - c_b S_b^T - S_b c_b^T + N c_b c_b^T. Shifting by the batch
+        # mean first (exact, the expression is shift-invariant) keeps the
+        # subtraction well conditioned in fp32.
         sample_count = (B - 1) * T
-        cov = torch.einsum(
-            "b s t g c, b s t g d -> b g c d",
-            X_other_centered,
-            X_other_centered,
+        ref = Xg.mean(dim=(0, 1), keepdim=True)
+        Xs = Xg - ref  # (B, T, ng, gs)
+        c = (center_for_cov - ref).expand(B, 1, n_groups, group_size).squeeze(1)  # (B, ng, gs)
+        G_seq = torch.einsum("s t g c, s t g d -> s g c d", Xs, Xs)
+        G_oth = G_seq.sum(dim=0, keepdim=True) - G_seq
+        S_seq = Xs.sum(dim=1)
+        S_oth = S_seq.sum(dim=0, keepdim=True) - S_seq
+        cross = c.unsqueeze(-1) * S_oth.unsqueeze(-2)
+        cov = (
+            G_oth - cross - cross.transpose(-1, -2)
+            + sample_count * c.unsqueeze(-1) * c.unsqueeze(-2)
         ) / sample_count
         cov = cov + eps * torch.eye(
             group_size,
@@ -538,6 +638,20 @@ def batch_orthonorm(
     if L.shape[0] == 1 and Xc_perm.shape[0] > 1:
         L = L.expand(Xc_perm.shape[0], -1, -1, -1).contiguous()
     Y_perm = torch.linalg.solve_triangular(L, Xc_perm, upper=False)
+
+    if renorm:
+        L_R = torch.linalg.cholesky(fix_cov(prev_cov, fix_factor))
+        L_R = L_R.expand(B, -1, -1, -1).contiguous()
+        with torch.no_grad():
+            R = torch.linalg.solve_triangular(L_R, L, upper=False)
+            d = torch.linalg.solve_triangular(
+                L_R, (current_mean - prev_mean).permute(0, 2, 3, 1), upper=False)
+            Y_R = torch.linalg.solve_triangular(
+                L_R, (Xg - prev_mean).permute(0, 2, 3, 1), upper=False)
+        Z = R @ Y_perm + d
+        # Forward value exactly Y_R, so no current-batch statistic enters it,
+        # not even as rounding error; the gradient is that of Z.
+        Y_perm = Y_R + (Z - Z.detach())
 
     # Restore shape (B, T, C)
     Y = Y_perm.permute(0, 3, 1, 2).reshape(B, T, C)
@@ -631,7 +745,7 @@ class BatchWhiteningBlock(nn.Module):
     # fully connected layer and 4 for a convolutional layer
     def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean",group_size=None,
                  fix_factor=0.9, warmup_ema_buffer=False, inference_ema=False, grad_scale=None,
-                 calib_center="loo"):
+                 calib_center="loo", renorm=False, renorm_stats="loo"):
         super().__init__()
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
@@ -645,6 +759,8 @@ class BatchWhiteningBlock(nn.Module):
         self.inference_ema = inference_ema
         self.grad_scale = grad_scale
         self.calib_center = calib_center
+        self.renorm = renorm
+        self.renorm_stats = renorm_stats
         self.gamma = nn.Parameter(torch.ones(num_features))
         # The variables that are not model parameters are initialized to 0 and 1
 
@@ -769,6 +885,8 @@ class BatchWhiteningBlock(nn.Module):
             inference_ema=self.inference_ema,
             grad_scale=self.grad_scale,
             calib_center=self.calib_center,
+            renorm=self.renorm,
+            renorm_stats=self.renorm_stats,
             training_mode=True if self.collect_calib_stats else None)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
@@ -877,6 +995,8 @@ def _make_norm_layer(config, layer_norm_fallback=True):
             inference_ema=config.bw_inference_ema,
             grad_scale=config.bw_grad_scale or None,
             calib_center=config.bw_calib_center,
+            renorm=config.bw_renorm,
+            renorm_stats=config.bw_renorm_stats,
         )
     elif config.normalization_type == "center_only":
         return BatchCenterBlock(config.n_embd, center_mode=config.batch_center_mode)
@@ -888,18 +1008,24 @@ def _make_norm_layer(config, layer_norm_fallback=True):
 
 class Block(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.bw_1 = _make_norm_layer(config, layer_norm_fallback=False)
+        if config.bw_where:
+            in_block = layer_idx in {int(i) for i in config.bw_where.split(",")}
+        else:
+            in_block = config.bw_layers <= 0 or layer_idx < config.bw_layers
+        norm = lambda: _make_norm_layer(config, layer_norm_fallback=False)
+        self.bw_1 = norm() if in_block and config.bw_sites in ("attn", "both") else nn.Identity()
+        self.bw_2 = norm() if in_block and config.bw_sites in ("mlp", "both") else nn.Identity()
+        keep_ln = lambda bw: config.bw_ln_after or isinstance(bw, nn.Identity)
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias) if keep_ln(self.bw_1) else nn.Identity()
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.bw_2 = _make_norm_layer(config, layer_norm_fallback=False)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias) if keep_ln(self.bw_2) else nn.Identity()
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(x))  # I droped bw from here
-        x = x + self.mlp(self.ln_2(self.bw_2(x)))  # Try to switch order and do BW before LN
+        x = x + self.attn(self.ln_1(self.bw_1(x)))
+        x = x + self.mlp(self.ln_2(self.bw_2(x)))
         return x
 
 class FirstBlock(nn.Module):
@@ -960,6 +1086,20 @@ class GPTConfig:
     # calibrated only: "loo", "blend_loo_cov", or "blend" (see batch_orthonorm).
     # "blend" makes the activations run away; kept only for comparison.
     bw_calib_center: str = "loo"
+    # Causal training forward: whiten with the previous iterations' statistics,
+    # gradient through the current batch (see batch_orthonorm). Without it,
+    # stacked BW layers leak each sequence's future tokens in training mode.
+    bw_renorm: bool = False
+    # renorm gradient statistics: "loo" (per sequence) or "batch" (shared, cheaper).
+    bw_renorm_stats: str = "loo"
+    # BW only in the first bw_layers blocks (0 -> all); later blocks keep plain LayerNorm.
+    bw_layers: int = 0
+    # Comma-separated block indices that get BW (e.g. "0,1"); overrides bw_layers.
+    bw_where: str = ""
+    # Which sublayer inputs get BW: "mlp" (ln_2(bw_2(x))), "attn" (ln_1(bw_1(x))) or "both".
+    bw_sites: str = "mlp"
+    # False drops the LayerNorm that follows each BW layer (BW feeds the linear layer directly).
+    bw_ln_after: bool = True
     # Deprecated compatibility field for older checkpoints/configs.
     batch_whitening: bool = None
 
@@ -992,6 +1132,9 @@ class GPTConfig:
                 f"got {self.normalization_type!r}"
             )
 
+        if self.bw_sites not in ("mlp", "attn", "both"):
+            raise ValueError(f"bw_sites must be 'mlp', 'attn' or 'both', got {self.bw_sites!r}")
+
         # "full" is a verification-only oracle (whole-batch, breaks causality).
         valid_center_modes = {"leave_one_out", "running_mean", "calibrated", "full"}
         if self.batch_center_mode not in valid_center_modes:
@@ -1012,7 +1155,7 @@ class GPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),  # h = nn.ModuleList([FirstBlock(config)] + [Block(config) for _ in range(config.n_layer - 1)]),
+            h = nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),  # h = nn.ModuleList([FirstBlock(config)] + [Block(config) for _ in range(config.n_layer - 1)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
             bw_f = _make_norm_layer(config),
         ))
@@ -1069,6 +1212,39 @@ class GPT(nn.Module):
                     layer.cov_warmup = cov_warmup
             self.curr_cov_warmup = cov_warmup
         return
+
+    def causal_leak(self, idx):
+        """Max change of sequence 0's first-half logits, relative to their
+        scale, when only sequence 0's second half is replaced. Runs the
+        training-mode forward (batch statistics, no dropout) in both warmup
+        states and restores every buffer, so the model is left untouched. A
+        causal model gives exactly 0; any batch statistic shared across stacked
+        layers gives a positive value.
+        """
+        B, T = idx.shape
+        H = T // 2
+        perturbed = idx.clone()
+        perturbed[0, H:] = torch.roll(idx[0, H:], 1)
+        saved = {k: v.clone() for k, v in self.named_buffers()}
+        was_training, warmup = self.training, self.curr_cov_warmup
+        self.eval()  # dropout off; BW takes the training path while grad is on
+        leak = 0.0
+        try:
+            for cov_warmup in (True, False):
+                self.set_bw_cov_warmup(cov_warmup)
+                outs = []
+                for x in (idx, perturbed):
+                    with torch.enable_grad():
+                        logits, _ = self(x, targets=x)
+                    outs.append(logits[0, :H].detach().float())
+                    for k, v in self.named_buffers():
+                        v.copy_(saved[k])
+                diff = (outs[0] - outs[1]).abs().max() / outs[0].abs().max()
+                leak = max(leak, diff.item())
+        finally:
+            self.set_bw_cov_warmup(warmup)
+            self.train(was_training)
+        return leak
 
     def bw_calibration_reset(self):
         for layer in self.bw_layers:

@@ -1,0 +1,4 @@
+s3-d-ln --normalization_type=layer_norm --dropout=0.2 --attn_dropout=0.2 --mlp_dropout=0.2 --resid_dropout=0.2
+s3-d-ln-lr2e-3 --normalization_type=layer_norm --dropout=0.2 --attn_dropout=0.2 --mlp_dropout=0.2 --resid_dropout=0.2 --learning_rate=2e-3
+s3-d-best --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --learning_rate=2e-3 --bw_fix_factor=0.8 --dropout=0.2 --attn_dropout=0.2 --mlp_dropout=0.2 --resid_dropout=0.2 --abort_ref_log=d-base_20597141.out --abort_ratio=1.5
+s3-d-best-ff0.4 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --learning_rate=2e-3 --bw_fix_factor=0.4 --dropout=0.2 --attn_dropout=0.2 --mlp_dropout=0.2 --resid_dropout=0.2 --abort_ref_log=d-base_20597141.out --abort_ratio=1.5

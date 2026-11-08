@@ -1,0 +1,5 @@
+s1-cal-nb10 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=calibrated --bw_momentum=0.1
+s1-cal-nb2 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=calibrated --bw_momentum=0.1 --bw_iter_calibration_num_batches=2
+s1-cal-nb10-gb1 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=calibrated --bw_momentum=0.1 --bw_grad_scale=1.0
+s1-loo-gb0.5 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=leave_one_out --bw_grad_scale=0.5
+s1-loo-gb2 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=leave_one_out --bw_grad_scale=2.0

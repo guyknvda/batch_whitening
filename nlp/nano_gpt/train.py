@@ -85,6 +85,16 @@ bw_warmup = "diag"  # "diag", "diag_ema", or "none"
 bw_inference_ema = False  # leave_one_out only
 bw_grad_scale = 0.0  # gradient boost on BW statistics; 0 -> per-mode default
 bw_calib_center = "loo"  # calibrated only: "loo", "blend_loo_cov", or "blend" (runs away)
+bw_renorm = False  # causal BW: forward with previous-iteration stats, gradient via current batch
+bw_renorm_stats = "loo"  # renorm gradient stats: "loo" per sequence or "batch" shared (cheaper)
+bw_layers = 0  # BW only in the first bw_layers blocks; 0 -> all
+bw_where = ""  # comma-separated block indices with BW, e.g. "0,1"; overrides bw_layers
+bw_sites = "mlp"  # BW on the "mlp" input, the "attn" input, or "both"
+bw_ln_after = True  # False drops the LayerNorm after each BW layer
+log_conditioning = True  # log covariance condition numbers of the sublayer inputs at each eval
+abort_ref_log = ""  # stop early if eval train loss exceeds abort_ratio x this log's loss at the same step
+abort_ratio = 1.3
+allow_causal_leak = False  # run even if the startup check finds future tokens leaking in training mode
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
 weight_decay = 1e-1
@@ -207,10 +217,11 @@ for arg in sys.argv[1:]:
     key, value = arg[2:].split("=", 1)
     if key not in config_keys:
         raise ValueError(f"Unknown config key: {key}")
-    try:
-        value = ast.literal_eval(value)
-    except (SyntaxError, ValueError):
-        pass
+    if not isinstance(globals()[key], str):
+        try:
+            value = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            pass
     if not isinstance(value, type(globals()[key])):
         raise TypeError(
             f"Expected {key} to be {type(globals()[key]).__name__}, "
@@ -322,7 +333,11 @@ model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=bloc
                   bw_fix_factor=bw_fix_factor, bw_warmup=bw_warmup,
                   bw_inference_ema=bw_inference_ema,
                   bw_grad_scale=bw_grad_scale,
-                  bw_calib_center=bw_calib_center) # start with model_args from command line
+                  bw_calib_center=bw_calib_center,
+                  bw_renorm=bw_renorm,
+                  bw_renorm_stats=bw_renorm_stats,
+                  bw_layers=bw_layers, bw_where=bw_where, bw_sites=bw_sites,
+                  bw_ln_after=bw_ln_after) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -368,6 +383,17 @@ if block_size < model.config.block_size:
     model.crop_block_size(block_size)
     model_args['block_size'] = block_size # so that the checkpoint will have the right value
 model.to(device)
+
+# Training-mode causality on the real model: replacing one sequence's second
+# half must not change its first-half logits. Batch statistics shared across
+# stacked BW layers make it change (see bw_renorm), so refuse to train unless
+# that is explicitly allowed.
+causal_leak = model.causal_leak(get_batch('train')[0])
+print(f"causality check (training-mode forward): leak={causal_leak:.3e}")
+if causal_leak > 1e-6 and not allow_causal_leak:
+    raise RuntimeError(
+        f"training-mode forward leaks future tokens (leak={causal_leak:.3e}); "
+        "use --bw_renorm=True, or --allow_causal_leak=True to run anyway")
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
 if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
@@ -429,6 +455,7 @@ if wandb_log and master_process:
     if wandb_api_key:
         wandb.login(key=wandb_api_key, relogin=True, host='https://api.wandb.ai')
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    wandb.summary["causal_leak"] = causal_leak
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
@@ -519,6 +546,46 @@ def bw_health():
     }
 
 
+@torch.no_grad()
+def conditioning():
+    """Covariance condition number of each block's sublayer inputs on one
+    training batch (eval mode). For the linear-layer inputs the smallest
+    eigenvalue is dropped: a LayerNorm output is orthogonal to a fixed
+    direction, so that eigenvalue is ~0 for every model. "resid" is the
+    residual stream entering the MLP sublayer, before any normalization.
+    """
+    sites = {"mlp_in": [], "attn_in": [], "resid": []}
+    hooks = []
+
+    def grab(key, l):
+        def hook(mod, inp, out=None):
+            x = inp[0].detach().double().reshape(-1, inp[0].shape[-1])
+            ev = torch.linalg.eigvalsh(torch.cov(x.T))
+            sites[key].append((l, (ev[-1] / ev[0 if key == "resid" else 1].clamp_min(1e-30)).item()))
+        return hook
+
+    for l, blk in enumerate(raw_model.transformer.h):
+        hooks.append(blk.mlp.c_fc.register_forward_hook(grab("mlp_in", l)))
+        hooks.append(blk.attn.c_attn.register_forward_hook(grab("attn_in", l)))
+        hooks.append(blk.bw_2.register_forward_hook(grab("resid", l)))
+    model.eval()
+    try:
+        Xh, _ = get_batch('train')
+        with ctx:
+            model(Xh)
+    finally:
+        for h in hooks:
+            h.remove()
+        model.train()
+    return {k: [c for _, c in sorted(v)] for k, v in sites.items()}
+
+
+abort_ref = {}
+if abort_ref_log:
+    import re
+    abort_ref = {int(a): float(b) for a, b in re.findall(
+        r"^step (\d+): train loss ([\d.]+)", open(abort_ref_log).read(), re.M)}
+
 running_mfu = -1.0
 while True:
 
@@ -538,6 +605,19 @@ while True:
                   f"output_scale {health['bw/output_scale']:.4f}, "
                   f"resid_mean_sd {health['bw/resid_mean_sd']:.4f}, "
                   f"running_mean_err {health['bw/running_mean_err']:.4f}")
+        cond = conditioning() if log_conditioning else {}
+        for k, v in cond.items():
+            gm = float(np.exp(np.mean(np.log(v))))
+            print(f"step {iter_num}: cond {k} {gm:.4g} [" + ", ".join(f"{c:.3g}" for c in v) + "]")
+            if wandb_log:
+                wandb.log({f"cond/{k}": gm, **{f"cond/{k}_{l}": c for l, c in enumerate(v)}}, commit=False)
+        train_loss = float(losses['train'])
+        if not math.isfinite(train_loss) or (
+                iter_num >= 500 and iter_num in abort_ref
+                and train_loss > abort_ratio * abort_ref[iter_num]):
+            print(f"ABORT at step {iter_num}: train loss {train_loss:.4f} "
+                  f"(reference {abort_ref.get(iter_num, float('nan')):.4f}, ratio {abort_ratio})")
+            break
         if wandb_log:
             wandb.log({
                 "iter": iter_num,

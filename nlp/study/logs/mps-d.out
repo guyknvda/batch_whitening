@@ -1,0 +1,96 @@
+Using config_name: nanogpt
+Overriding wandb_run_name = mps-d
+Overriding out_dir = /tmp/out-mps-d
+Overriding normalization_type = full_bw
+Overriding bw_renorm = True
+Overriding bw_renorm_stats = batch
+Overriding bw_group_size = 384
+Overriding batch_center_mode = running_mean
+Overriding bw_momentum = 0.7
+Overriding max_iters = 400
+Overriding wandb_log = False
+Overriding log_conditioning = False
+Overriding eval_interval = 1000
+normalization_type: full_bw
+batch_center_mode: running_mean
+bw_iter_calibration: False
+tokens per iteration will be: 16,384
+found vocab_size = 65 (inside data/shakespeare_char/meta.pkl)
+Initializing a new model from scratch
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+number of parameters: 10.65M
+n_groups: 1, group_size: 384
+causality check (training-mode forward): leak=0.000e+00
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 27, with 10,368 parameters
+using fused AdamW: True
+step 0: train loss 4.2874, val loss 4.2823
+step 0: bw input_rms 0.0838 (max 0.1244), output_scale 0.0721, resid_mean_sd 0.5394, running_mean_err 1.0000
+iter 0: loss 4.2784, time 11046.61ms, mfu -100.00%
+iter 10: loss 3.2495, time 74.70ms, mfu 4.99%
+iter 20: loss 2.8222, time 74.06ms, mfu 4.99%
+iter 30: loss 2.6391, time 72.90ms, mfu 5.01%
+iter 40: loss 2.6142, time 74.25ms, mfu 5.01%
+iter 50: loss 2.5442, time 75.23ms, mfu 5.00%
+iter 60: loss 2.5454, time 75.73ms, mfu 4.99%
+iter 70: loss 2.5071, time 75.88ms, mfu 4.99%
+iter 80: loss 2.4961, time 75.07ms, mfu 4.98%
+iter 90: loss 2.5050, time 76.15ms, mfu 4.98%
+iter 100: loss 2.8782, time 74.27ms, mfu 4.98%
+iter 110: loss 2.5208, time 76.63ms, mfu 4.97%
+iter 120: loss 2.3719, time 74.92ms, mfu 4.97%
+iter 130: loss 2.3133, time 73.98ms, mfu 4.98%
+iter 140: loss 2.2133, time 74.17ms, mfu 4.98%
+iter 150: loss 2.1403, time 73.88ms, mfu 4.99%
+iter 160: loss 2.0619, time 74.70ms, mfu 4.99%
+iter 170: loss 1.9956, time 75.39ms, mfu 4.98%
+iter 180: loss 1.9482, time 74.65ms, mfu 4.98%
+iter 190: loss 1.8883, time 74.27ms, mfu 4.99%
+iter 200: loss 1.8586, time 75.29ms, mfu 4.98%
+iter 210: loss 1.8051, time 75.16ms, mfu 4.98%
+iter 220: loss 1.7590, time 73.87ms, mfu 4.99%
+iter 230: loss 1.6732, time 74.93ms, mfu 4.99%
+iter 240: loss 1.6759, time 75.19ms, mfu 4.98%
+iter 250: loss 1.6376, time 74.63ms, mfu 4.99%
+iter 260: loss 1.5755, time 74.77ms, mfu 4.99%
+iter 270: loss 1.5983, time 74.73ms, mfu 4.99%
+iter 280: loss 1.5586, time 75.39ms, mfu 4.98%
+iter 290: loss 1.5651, time 74.62ms, mfu 4.98%
+iter 300: loss 1.4833, time 74.50ms, mfu 4.99%
+iter 310: loss 1.5137, time 75.14ms, mfu 4.98%
+iter 320: loss 1.4621, time 74.05ms, mfu 4.99%
+iter 330: loss 1.4436, time 75.85ms, mfu 4.98%
+iter 340: loss 1.4331, time 74.04ms, mfu 4.99%
+iter 350: loss 1.4248, time 73.32ms, mfu 5.00%
+iter 360: loss 1.4765, time 75.97ms, mfu 4.99%
+iter 370: loss 1.4320, time 74.14ms, mfu 4.99%
+iter 380: loss 1.3996, time 76.46ms, mfu 4.98%
+iter 390: loss 1.4042, time 74.88ms, mfu 4.98%
+iter 400: loss 1.3991, time 74.31ms, mfu 4.98%

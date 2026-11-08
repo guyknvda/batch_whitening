@@ -1,0 +1,4 @@
+s2-ln-lr5e-4 --normalization_type=layer_norm --learning_rate=5e-4
+s2-ln-lr1.5e-3 --normalization_type=layer_norm --learning_rate=1.5e-3
+s2-cal-m0.7-nb2 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=calibrated --bw_momentum=0.7 --bw_grad_scale=1.0 --bw_iter_calibration_num_batches=2
+s2-loo-lr2e-3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=leave_one_out --learning_rate=2e-3

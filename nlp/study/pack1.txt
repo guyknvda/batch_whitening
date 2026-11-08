@@ -1,0 +1,4 @@
+s1-ln --normalization_type=layer_norm
+s1-rm-m0.7 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7
+s1-rm-m0.3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.3
+s1-loo --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=leave_one_out

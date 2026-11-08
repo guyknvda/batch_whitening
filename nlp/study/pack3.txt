@@ -1,0 +1,4 @@
+s1-rm-L1 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_layers=1
+s1-rm-L2 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_layers=2
+s1-rm-L3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_layers=3
+s1-rm-last3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_where=3,4,5

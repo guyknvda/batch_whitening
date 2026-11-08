@@ -1,0 +1,4 @@
+s3-ln-s1 --normalization_type=layer_norm --seed=1
+s3-ln-s2 --normalization_type=layer_norm --seed=2
+s3-best-s1 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --learning_rate=2e-3 --bw_fix_factor=0.8 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --seed=1
+s3-best-s2 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --learning_rate=2e-3 --bw_fix_factor=0.8 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --seed=2

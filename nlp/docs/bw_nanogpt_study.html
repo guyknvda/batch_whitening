@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Causal BW on nanoGPT: what works</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg-alt: #f6f8fa;
+    --ok: #1a7f37; --diff: #9a6700; --gap: #cf222e; --new: #0969da;
+  }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--fg);
+         max-width: 1180px; margin: 32px auto; padding: 0 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 14px; margin: 20px 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  ul.summary { padding-left: 20px; margin: 8px 0; }
+  ul.summary li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 4px; font-size: 13px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-alt); font-weight: 600; }
+  td.f { font-weight: 600; width: 17%; }
+  td.s { width: 92px; white-space: nowrap; }
+  td.n { color: var(--muted); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chip { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 600;
+          border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .diff { color: var(--diff); } .gap { color: var(--gap); } .new { color: var(--new); }
+  .legend span { margin-right: 14px; }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg-alt);
+         padding: 1px 4px; border-radius: 4px; }
+  td.better { color: var(--ok); font-weight: 700; }
+  td.bad { color: var(--gap); }
+  tr.baseline td { background: var(--bg-alt); }
+  .cap { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+  .legend-line { font-size: 12px; margin: 4px 0; }
+  .legend-line span { margin-right: 16px; white-space: nowrap; }
+  .rng { color: var(--muted); font-size: 11px; }
+  details { margin: 16px 0; } summary { cursor: pointer; font-weight: 600; }
+  .legend-line i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+  .todo { border: 1px solid var(--new); border-left-width: 4px; background: #ddf4ff; border-radius: 6px;
+          padding: 10px 14px; margin: 0 0 20px; }
+  .todo ul { margin: 6px 0 0; padding-left: 20px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 28px; }
+  .leak { border: 2px solid var(--gap); border-left-width: 6px; background: #ffebe9; border-radius: 6px;
+          padding: 12px 16px; margin: 0 0 20px; }
+  .leak h2 { color: var(--gap); border: 0; margin: 0 0 6px; padding: 0; }
+  .leak ol, .leak ul { margin: 6px 0; padding-left: 22px; } .leak li { margin: 4px 0; }
+  .leak table { background: #fff; }
+</style>
+<style>.figcap { color: var(--muted); font-style: italic; font-size: 12.5px; margin: 6px 0 18px 28px; }</style>
+</head>
+<body>
+<h1>Causal BW on nanoGPT: what works</h1>
+<p class="sub">shakespeare_char, B&nbsp;=&nbsp;64, T&nbsp;=&nbsp;256, 6 layers, C&nbsp;=&nbsp;384, dropout 0, 5000 steps, 1 GPU.
+All BW runs use the causal fix (<code>bw_renorm=True</code>, shared statistics). Feature list and pre-fix work:
+<a href="bw_paper_vs_code.html">bw_paper_vs_code.html</a>; the fix and GPT-2: <a href="bw_causal_report.html">bw_causal_report.html</a>.</p>
+
+<div class="todo"><b>Summary.</b> Causal BW gives a clear, seed-robust gain over LayerNorm on nanoGPT, larger than before the leak fix.
+<ul>
+  <li><b>No dropout:</b> 15% lower mean train loss and 7% lower final train loss
+  on every seed; loss 0.1 is reached 6% sooner. Validation is unchanged. Before this study the causal version gave 8%; the leaky one 13%.</li>
+  <li><b>Vanilla nanoGPT (dropout 0.2):</b> 4% lower mean and 10% lower final train loss on every seed, validation tied. Over 10k steps the final gain grows to &minus;18% (2 seeds). Before the fix the best BW setting was 2% ahead, with the leak.</li>
+  <li><b>Recipe:</b> renorm with shared statistics, <code>running_mean</code>, full width (group 384), no warmup, no gradient boost, BW on every MLP input followed by the LayerNorm, and a higher learning rate (BW 1.5e-3; LayerNorm's best is 1e-3).
+  No dropout: momentum 0.7, <code>fix_factor</code> 0.8. Dropout 0.2: more history and shrinkage, momentum 0.3, <code>fix_factor</code> 0.4, lr 2e-3.</li>
+  <li><b>Cost:</b> 2&times; per iteration (27.7 against 14.0 ms), so per step BW wins but in wall-clock time it does not yet. BW in only the first 3 blocks costs 1.4&times; but keeps only a third of the gain.</li>
+  <li><b>Dropped:</b> <code>calibrated</code> (ties LayerNorm at 2.5&ndash;7&times; the cost), warmup, gradient boost (diverges above 1), BW on the attention input, BW without the following LayerNorm.</li>
+</ul>
+<p>Commands: <code>--normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --batch_center_mode=running_mean --bw_group_size=384 --bw_warmup=none --bw_momentum=0.7 --bw_fix_factor=0.8 --learning_rate=1.5e-3</code>
+(dropout 0.2: <code>--bw_momentum=0.3 --bw_fix_factor=0.4 --learning_rate=2e-3</code>). About 2.9 GPU-hours for 61 runs, using CUDA MPS to run 4&ndash;6 per GPU.</p></div>
+
+<h2>Result: best recipe against LayerNorm (3 seeds each)</h2>
+<table>
+<tr><th>Configuration</th><th class="num">Seeds</th><th class="num">ms / iter</th><th class="num">Mean train loss</th><th class="num">Final train loss</th>
+<th class="num">Steps to loss 1.0</th><th class="num">Steps to loss 0.1</th><th class="num">Best val</th></tr>
+<tr><td>LayerNorm, lr 1e-3 (baseline)</td><td class=num>3</td><td class=num>14.0</td><td class="num">0.494 <span class="rng">0.490&ndash;0.497</span></td><td class="num">0.0838 <span class="rng">0.0830&ndash;0.0845</span></td><td class="num">1176 <span class="rng">1164&ndash;1191</span></td><td class="num">3987 <span class="rng">3974&ndash;4007</span></td><td class="num">1.543 <span class="rng">1.539&ndash;1.550</span></td></tr>
+<tr><td><b>BW, lr 1.5e-3 (recommended)</b></td><td class=num>3</td><td class=num>27.7</td><td class="num better">0.420 (&minus;15%) <span class="rng">0.413&ndash;0.427</span></td><td class="num better">0.0781 (&minus;7%) <span class="rng">0.0770&ndash;0.0795</span></td><td class="num better">970 (&minus;18%) <span class="rng">943&ndash;991</span></td><td class="num better">3738 (&minus;6%) <span class="rng">3679&ndash;3812</span></td><td class="num">1.546 (+0%) <span class="rng">1.537&ndash;1.552</span></td></tr>
+<tr><td>BW, lr 2e-3</td><td class=num>3</td><td class=num>27.7</td><td class="num better">0.430 (&minus;13%) <span class="rng">0.423&ndash;0.442</span></td><td class="num better">0.0772 (&minus;8%) <span class="rng">0.0761&ndash;0.0792</span></td><td class="num better">990 (&minus;16%) <span class="rng">963&ndash;1033</span></td><td class="num better">3726 (&minus;7%) <span class="rng">3655&ndash;3771</span></td><td class="num">1.553 (+1%) <span class="rng">1.551&ndash;1.554</span></td></tr>
+</table>
+<p class="cap">Mean over seeds (range in grey). Mean train loss = average eval-mode train loss over steps 250&ndash;5000 (area under the curve). Bold green = better than LayerNorm.</p>
+<div class="legend-line"><span><i style="background:#000"></i>LayerNorm (0%)</span><span><i style="background:#afb8c1"></i>BW, renorm default (warmup on, lr 1e-3)</span><span><i style="background:#0969da"></i>BW, warmup off</span><span><i style="background:#1a7f37"></i>BW best recipe (3 seeds)</span></div>
+<svg viewBox="0 0 760 280" width="100%" role="img" aria-label="Train loss relative to LayerNorm">
+<line x1="56" x2="744" y1="240.0" y2="240.0" stroke="#d1d9e0"/>
+<text x="50" y="244.0" text-anchor="end" font-size="11" fill="#59636e">-30%</text>
+<line x1="56" x2="744" y1="202.7" y2="202.7" stroke="#d1d9e0"/>
+<text x="50" y="206.7" text-anchor="end" font-size="11" fill="#59636e">-20%</text>
+<line x1="56" x2="744" y1="165.3" y2="165.3" stroke="#d1d9e0"/>
+<text x="50" y="169.3" text-anchor="end" font-size="11" fill="#59636e">-10%</text>
+<line x1="56" x2="744" y1="128.0" y2="128.0" stroke="#d1d9e0"/>
+<text x="50" y="132.0" text-anchor="end" font-size="11" fill="#59636e">+0%</text>
+<line x1="56" x2="744" y1="90.7" y2="90.7" stroke="#d1d9e0"/>
+<text x="50" y="94.7" text-anchor="end" font-size="11" fill="#59636e">+10%</text>
+<line x1="56" x2="744" y1="53.3" y2="53.3" stroke="#d1d9e0"/>
+<text x="50" y="57.3" text-anchor="end" font-size="11" fill="#59636e">+20%</text>
+<line x1="56" x2="744" y1="16.0" y2="16.0" stroke="#d1d9e0"/>
+<text x="50" y="20.0" text-anchor="end" font-size="11" fill="#59636e">+30%</text>
+<line x1="56.0" x2="744.0" y1="128.0" y2="128.0" stroke="#000" stroke-width="2.5"/>
+<text x="56.0" y="256" text-anchor="middle" font-size="11" fill="#59636e">0</text>
+<text x="193.6" y="256" text-anchor="middle" font-size="11" fill="#59636e">1000</text>
+<text x="331.2" y="256" text-anchor="middle" font-size="11" fill="#59636e">2000</text>
+<text x="468.8" y="256" text-anchor="middle" font-size="11" fill="#59636e">3000</text>
+<text x="606.4" y="256" text-anchor="middle" font-size="11" fill="#59636e">4000</text>
+<text x="744.0" y="256" text-anchor="middle" font-size="11" fill="#59636e">5000</text>
+<text x="400.0" y="274" text-anchor="middle" font-size="12">Iteration</text>
+<polyline fill="none" stroke="#afb8c1" stroke-width="2.5" points="90.4,155.2 124.8,148.6 159.2,146.3 193.6,154.5 228.0,170.5 262.4,191.9 296.8,194.8 331.2,188.8 365.6,169.1 400.0,157.0 434.4,143.3 468.8,130.1 503.2,136.4 537.6,128.0 572.0,137.8 606.4,138.3 640.8,128.0 675.2,136.3 709.6,128.4 744.0,130.7"/>
+<polyline fill="none" stroke="#0969da" stroke-width="2.5" points="90.4,161.5 124.8,151.4 159.2,150.0 193.6,162.6 228.0,191.5 262.4,216.8 296.8,218.4 331.2,210.0 365.6,190.6 400.0,170.0 434.4,153.3 468.8,139.9 503.2,141.7 537.6,139.1 572.0,147.9 606.4,143.1 640.8,135.2 675.2,141.8 709.6,135.4 744.0,135.6"/>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2.5" points="90.4,172.1 124.8,150.1 159.2,150.6 193.6,170.8 228.0,209.4 262.4,240.0 296.8,240.0 331.2,240.0 365.6,212.8 400.0,192.2 434.4,172.9 468.8,166.3 503.2,163.8 537.6,154.5 572.0,156.9 606.4,158.5 640.8,154.9 675.2,154.7 709.6,153.2 744.0,153.4"/>
+</svg>
+<p class="figcap"><b>Figure 1:</b> Eval-mode train loss relative to LayerNorm (mean of 3 LayerNorm seeds), every 250 steps. Below 0 = better.
+BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer steps (1.13&times; faster per step; at 2&times; the cost per step, about 1.76&times; LayerNorm's wall-clock time).</p>
+<div class="legend-line"><span><i style="background:#000"></i>LayerNorm, lr 1e-3 (3 seeds)</span><span><i style="background:#0969da"></i>BW, same lr 1e-3, ff 0.9 (1 seed)</span><span><i style="background:#1a7f37"></i>BW best recipe, lr 1.5e-3 (3 seeds)</span><span>solid = train, dashed = val</span></div>
+<svg viewBox="0 0 760 320" width="100%" role="img" aria-label="Learning curves, dropout 0">
+<line x1="56" x2="744" y1="280.0" y2="280.0" stroke="#d1d9e0"/>
+<text x="50" y="284.0" text-anchor="end" font-size="11" fill="#59636e">0.05</text>
+<line x1="56" x2="744" y1="240.3" y2="240.3" stroke="#d1d9e0"/>
+<text x="50" y="244.3" text-anchor="end" font-size="11" fill="#59636e">0.1</text>
+<line x1="56" x2="744" y1="200.5" y2="200.5" stroke="#d1d9e0"/>
+<text x="50" y="204.5" text-anchor="end" font-size="11" fill="#59636e">0.2</text>
+<line x1="56" x2="744" y1="148.0" y2="148.0" stroke="#d1d9e0"/>
+<text x="50" y="152.0" text-anchor="end" font-size="11" fill="#59636e">0.5</text>
+<line x1="56" x2="744" y1="108.3" y2="108.3" stroke="#d1d9e0"/>
+<text x="50" y="112.3" text-anchor="end" font-size="11" fill="#59636e">1</text>
+<line x1="56" x2="744" y1="68.5" y2="68.5" stroke="#d1d9e0"/>
+<text x="50" y="72.5" text-anchor="end" font-size="11" fill="#59636e">2</text>
+<line x1="56" x2="744" y1="28.8" y2="28.8" stroke="#d1d9e0"/>
+<text x="50" y="32.8" text-anchor="end" font-size="11" fill="#59636e">4</text>
+<text x="56.0" y="296" text-anchor="middle" font-size="11" fill="#59636e">0</text>
+<text x="193.6" y="296" text-anchor="middle" font-size="11" fill="#59636e">1000</text>
+<text x="331.2" y="296" text-anchor="middle" font-size="11" fill="#59636e">2000</text>
+<text x="468.8" y="296" text-anchor="middle" font-size="11" fill="#59636e">3000</text>
+<text x="606.4" y="296" text-anchor="middle" font-size="11" fill="#59636e">4000</text>
+<text x="744.0" y="296" text-anchor="middle" font-size="11" fill="#59636e">5000</text>
+<text x="400.0" y="314" text-anchor="middle" font-size="12">Iteration</text>
+<text x="14" y="148.0" text-anchor="middle" font-size="12" transform="rotate(-90 14 148.0)">Loss (log scale)</text>
+<polyline fill="none" stroke="#000" stroke-width="2.2" points="56.0,25.3 90.4,75.0 124.8,89.5 159.2,96.3 193.6,102.6 228.0,110.9 262.4,123.2 296.8,140.8 331.2,160.3 365.6,178.6 400.0,194.1 434.4,205.7 468.8,215.8 503.2,223.7 537.6,230.9 572.0,236.0 606.4,240.5 640.8,244.4 675.2,247.2 709.6,249.0 744.0,250.4"/>
+<polyline fill="none" stroke="#000" stroke-width="2.2" stroke-dasharray="6 4" points="56.0,25.3 90.4,70.5 124.8,80.7 159.2,83.4 193.6,82.9 228.0,79.9 262.4,73.6 296.8,65.9 331.2,57.6 365.6,50.5 400.0,45.1 434.4,40.4 468.8,37.5 503.2,34.5 537.6,32.3 572.0,30.0 606.4,28.6 640.8,27.4 675.2,26.6 709.6,25.8 744.0,25.2"/>
+<polyline fill="none" stroke="#0969da" stroke-width="2.2" points="56.0,24.8 90.4,80.4 124.8,93.2 159.2,99.8 193.6,108.1 228.0,121.6 262.4,138.8 296.8,156.7 331.2,174.5 365.6,189.1 400.0,200.9 434.4,209.7 468.8,217.7 503.2,225.9 537.6,232.6 572.0,239.1 606.4,242.9 640.8,245.5 675.2,249.3 709.6,250.2 744.0,251.6"/>
+<polyline fill="none" stroke="#0969da" stroke-width="2.2" stroke-dasharray="6 4" points="56.0,24.9 90.4,74.8 124.8,82.4 159.2,83.4 193.6,80.1 228.0,74.0 262.4,65.2 296.8,57.5 331.2,51.4 365.6,46.2 400.0,42.2 434.4,38.6 468.8,35.8 503.2,33.3 537.6,31.5 572.0,29.8 606.4,28.3 640.8,27.3 675.2,26.3 709.6,25.9 744.0,25.5"/>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2.2" points="56.0,25.3 90.4,82.2 124.8,93.0 159.2,99.8 193.6,109.5 228.0,125.0 262.4,145.2 296.8,165.4 331.2,180.8 365.6,193.4 400.0,204.9 434.4,213.1 468.8,222.0 503.2,229.5 537.6,235.1 572.0,240.6 606.4,245.4 640.8,248.7 675.2,251.4 709.6,253.1 744.0,254.4"/>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2.2" stroke-dasharray="6 4" points="56.0,25.3 90.4,75.8 124.8,82.6 159.2,83.3 193.6,79.6 228.0,72.2 262.4,62.5 296.8,54.7 331.2,48.3 365.6,43.3 400.0,38.8 434.4,35.5 468.8,32.5 503.2,30.0 537.6,27.9 572.0,26.2 606.4,24.7 640.8,24.0 675.2,23.2 709.6,22.8 744.0,22.5"/>
+</svg>
+<p class="figcap"><b>Figure 2:</b> Learning curves, dropout 0. Eval-mode train loss (solid) and validation loss (dashed), every 250 steps, averaged over the seeds of each configuration.
+The blue run keeps LayerNorm's learning rate and differs from the BW defaults only by warmup off.
+Without dropout every model overfits after about step 1000 (validation rises); BW fits faster, so its validation loss rises sooner and ends higher (4.46 against 4.26 at step 5000), while the best validation loss is tied.
+BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer steps (1.13&times; faster per step; at 2&times; the cost per step, about 1.76&times; LayerNorm's wall-clock time).</p>
+
+<h2>What each knob does</h2>
+<table>
+<tr><th>Question</th><th>Setting</th><th class="num">Mean train loss vs. LayerNorm</th><th>Conclusion</th></tr>
+<tr><td rowspan="4">Mode (statistics in the stored buffers)</td><td><b><code>running_mean</code>, momentum 0.7</b></td><td class="num better">&minus;7.7%</td><td rowspan="4"><code>running_mean</code>. With renorm the modes differ only in what the buffers hold; <code>leave_one_out</code> is <code>running_mean</code> with momentum 1. <code>calibrated</code> at best ties the baseline at 2.5&ndash;7&times; the cost: drop it.</td></tr>
+<tr><td><code>leave_one_out</code> (= momentum 1)</td><td class="num better">&minus;5.5%</td></tr>
+<tr><td><code>calibrated</code>, 2 calibration batches, gradient weight 0.7</td><td class="num better">&minus;0.7%</td></tr>
+<tr><td><code>calibrated</code>, default (10 batches, boost 10)</td><td class="num">+102.0% <span class="rng">(diverged, stopped at 500)</span></td></tr>
+<tr><td rowspan="4">Momentum (no warmup)</td><td>0.5</td><td class="num better">&minus;6.3%</td><td rowspan="4">0.7: the buffer is 70% the last batch. Less history is worse, but some history helps.</td></tr>
+<tr><td><b>0.7</b></td><td class="num better">&minus;10.6%</td></tr>
+<tr><td>0.85</td><td class="num better">&minus;10.0%</td></tr>
+<tr><td>1.0 (<code>leave_one_out</code>)</td><td class="num better">&minus;5.5%</td></tr>
+<tr><td rowspan="4">Warmup (diagonal whitening for the first 250 steps)</td><td>on (<code>diag</code>)</td><td class="num better">&minus;7.7%</td><td rowspan="4">Off. With renorm the forward pass already uses stored statistics, so the diagonal start only delays the whitening.</td></tr>
+<tr><td><b>off</b></td><td class="num better">&minus;10.6%</td></tr>
+<tr><td>on, best recipe</td><td class="num better">&minus;11.8%</td></tr>
+<tr><td><b>off, best recipe</b></td><td class="num better">&minus;13.0%</td></tr>
+<tr><td rowspan="9">Gradient boost (<code>bw_grad_scale</code>)</td><td><code>running_mean</code>: 0.5</td><td class="num better">&minus;4.9%</td><td rowspan="9">No boost. The current batch's natural gradient weight (momentum for <code>running_mean</code>, 1 for <code>leave_one_out</code>) is best; scaling it up diverges in every mode, scaling it down is worse.</td></tr>
+<tr><td><b>1</b></td><td class="num better">&minus;7.7%</td></tr>
+<tr><td>1.43 (= 1/momentum)</td><td class="num">+11.4% <span class="rng">(diverged, stopped at 1750)</span></td></tr>
+<tr><td>3</td><td class="num">+37.3% <span class="rng">(diverged, stopped at 500)</span></td></tr>
+<tr><td><code>leave_one_out</code>: 0.5</td><td class="num">+0.0%</td></tr>
+<tr><td><b>1</b></td><td class="num better">&minus;5.5%</td></tr>
+<tr><td>2</td><td class="num">+72.2% <span class="rng">(diverged, stopped at 500)</span></td></tr>
+<tr><td><code>calibrated</code>: 1 (weight 0.1)</td><td class="num">+45.5% <span class="rng">(diverged, stopped at 1250)</span></td></tr>
+<tr><td>10 (default)</td><td class="num">+102.0% <span class="rng">(diverged, stopped at 500)</span></td></tr>
+<tr><td rowspan="6">Depth (which blocks get BW)</td><td><b>all 6</b></td><td class="num better">&minus;7.7%</td><td rowspan="6">All blocks. Unlike GPT-2, nanoGPT gains from BW at every depth.</td></tr>
+<tr><td>first 1</td><td class="num better">&minus;4.1%</td></tr>
+<tr><td>first 2</td><td class="num better">&minus;5.3%</td></tr>
+<tr><td>first 3</td><td class="num better">&minus;2.9%</td></tr>
+<tr><td>last 3</td><td class="num better">&minus;4.4%</td></tr>
+<tr><td>first 2, best recipe</td><td class="num better">&minus;4.6%</td></tr>
+<tr><td rowspan="4">Site</td><td><b>MLP input, BW &rarr; LayerNorm (current)</b></td><td class="num better">&minus;7.7%</td><td rowspan="4">MLP input with the LayerNorm kept. BW on the attention input hurts.</td></tr>
+<tr><td>MLP and attention inputs</td><td class="num better">&minus;1.8%</td></tr>
+<tr><td>attention input only</td><td class="num">+11.9% <span class="rng">(diverged, stopped at 2000)</span></td></tr>
+<tr><td>MLP input, no LayerNorm after BW</td><td class="num">+4.3%</td></tr>
+<tr><td rowspan="7">Group size and <code>fix_factor</code></td><td>group 384, ff 0.9</td><td class="num better">&minus;7.7%</td><td rowspan="7">Full width (384), ff 0.8.</td></tr>
+<tr><td>group 384, ff 0.8</td><td class="num better">&minus;7.5%</td></tr>
+<tr><td>group 384, ff 0.6</td><td class="num better">&minus;5.1%</td></tr>
+<tr><td>group 128, ff 0.9</td><td class="num">+4.7%</td></tr>
+<tr><td><b>best recipe, ff 0.8</b></td><td class="num better">&minus;13.0%</td></tr>
+<tr><td>best recipe, ff 0.7</td><td class="num better">&minus;12.5%</td></tr>
+<tr><td>best recipe, group 192</td><td class="num better">&minus;4.9%</td></tr>
+<tr><td rowspan="9">Learning rate</td><td>LayerNorm 5e-4</td><td class="num">+22.9%</td><td rowspan="9">BW trains well at 1.5&ndash;2&times; the baseline's learning rate, where LayerNorm gets worse; the baseline is at its own best (1e-3). 2.5e-3 is already past BW's edge, so 1.5e-3 is the safe choice.</td></tr>
+<tr><td><b>LayerNorm 1e-3 (baseline)</b></td><td class="num">+0.0%</td></tr>
+<tr><td>LayerNorm 1.5e-3</td><td class="num">+0.8%</td></tr>
+<tr><td>LayerNorm 2e-3</td><td class="num">+3.3%</td></tr>
+<tr><td>BW 1e-3 (ff 0.9)</td><td class="num better">&minus;10.6%</td></tr>
+<tr><td><b>BW 1.5e-3 (ff 0.8)</b></td><td class="num better">&minus;14.3%</td></tr>
+<tr><td>BW 2e-3 (ff 0.8)</td><td class="num better">&minus;13.0%</td></tr>
+<tr><td>BW 2.5e-3 (ff 0.8)</td><td class="num">+1.3%</td></tr>
+<tr><td>BW 3e-3</td><td class="num">+1.9%</td></tr>
+</table>
+<p class="cap">One seed (1337) per row; seed-to-seed spread is about &plusmn;1%. Each row changes one knob from the row in bold, starting from renorm <code>running_mean</code>, group 384, momentum 0.7, ff 0.9, warmup on, lr 1e-3. Runs stop automatically once they are 50% worse than LayerNorm at the same step.</p>
+
+<h2>Conditioning: does BW help the MLP input, and does it predict the gain?</h2>
+<table>
+<tr><th rowspan="2">Model</th><th colspan="2" class="num">Step 250</th><th colspan="2" class="num">Step 1000</th><th colspan="2" class="num">Step 5000</th><th rowspan="2" class="num">Mean train loss vs. LayerNorm</th></tr>
+<tr><th class="num">layer 0</th><th class="num">layers 1&ndash;5</th><th class="num">layer 0</th><th class="num">layers 1&ndash;5</th><th class="num">layer 0</th><th class="num">layers 1&ndash;5</th></tr>
+<tr><td>LayerNorm</td><td class=num>3e+04</td><td class=num>25916</td><td class=num>9e+04</td><td class=num>1291</td><td class=num>3e+05</td><td class=num>98</td><td class="num">+0.0%</td></tr>
+<tr><td>BW, warmup on</td><td class=num>2e+04</td><td class=num>2481</td><td class=num>3e+04</td><td class=num>197</td><td class=num>1e+05</td><td class=num>74</td><td class="num better">&minus;7.7%</td></tr>
+<tr><td>BW, warmup off</td><td class=num>5e+03</td><td class=num>899</td><td class=num>2e+04</td><td class=num>92</td><td class=num>6e+04</td><td class=num>51</td><td class="num better">&minus;10.6%</td></tr>
+<tr><td>BW <code>leave_one_out</code></td><td class=num>6e+03</td><td class=num>521</td><td class=num>9e+03</td><td class=num>55</td><td class=num>2e+04</td><td class=num>18</td><td class="num better">&minus;5.5%</td></tr>
+<tr><td>BW group 128 (worse)</td><td class=num>9e+05</td><td class=num>88588</td><td class=num>7e+06</td><td class=num>33091</td><td class=num>4e+07</td><td class=num>13104</td><td class="num">+4.7%</td></tr>
+<tr><td>BW best recipe</td><td class=num>1e+04</td><td class=num>1405</td><td class=num>1e+05</td><td class=num>320</td><td class=num>1e+06</td><td class=num>912</td><td class="num better">&minus;14.3%</td></tr>
+</table>
+<p class="cap">Condition number (largest / second-smallest eigenvalue; LayerNorm output always has one null direction) of the MLP input covariance, one training batch, eval mode. Layers 1&ndash;5: geometric mean.</p>
+<ul class="summary">
+  <li><b>BW conditions the MLP input much better early on:</b> 10&ndash;30&times; better than LayerNorm at step 250 and 4&ndash;14&times; at step 1000 (layers 1&ndash;5). By step 5000 LayerNorm has caught up, and the best recipe, with its higher learning rate, ends <i>worse</i> conditioned than LayerNorm while training best.</li>
+  <li><b>Layer 0 stays very ill-conditioned</b> (10<sup>3</sup>&ndash;10<sup>6</sup>) in every model: its input is the token plus position embedding of a 65-symbol vocabulary, and the whitening shrinkage (<code>fix_factor</code>) caps how much BW can lift its smallest directions.</li>
+  <li><b>As a predictor it works early and within one knob.</b> Across 45 runs, the rank correlation between MLP-input condition number and mean train loss is +0.66 at step 250 and +0.33 at step 5000, matching a gain that comes from early training. Within group size and <code>fix_factor</code>, worse conditioning means worse loss (group 128: about 10<sup>5</sup> at step 250, the worst completed BW run). Across modes and learning rates it misleads: <code>leave_one_out</code> conditions best and trains worse than <code>running_mean</code>.</li>
+</ul>
+
+<h2>Vanilla nanoGPT (dropout 0.2 everywhere)</h2>
+<table>
+<tr><th>Configuration</th><th class="num">Seeds</th><th class="num">ms / iter</th><th class="num">Mean train loss</th><th class="num">Final train loss</th>
+<th class="num">Steps to loss 1.0</th><th class="num">Steps to loss 0.7</th><th class="num">Best val</th></tr>
+<tr><td>LayerNorm, lr 1e-3 (vanilla nanoGPT)</td><td class=num>3</td><td class=num>14.0</td><td class="num">1.004 <span class="rng">1.000&ndash;1.011</span></td><td class="num">0.6233 <span class="rng">0.6149&ndash;0.6363</span></td><td class="num">2301 <span class="rng">2273&ndash;2331</span></td><td class="num">4106 <span class="rng">4052&ndash;4201</span></td><td class="num">1.466 <span class="rng">1.463&ndash;1.468</span></td></tr>
+<tr><td><b>BW, momentum 0.3, ff 0.4, lr 2e-3</b></td><td class=num>3</td><td class=num>27.7</td><td class="num better">0.963 (&minus;4%) <span class="rng">0.953&ndash;0.970</span></td><td class="num better">0.5604 (&minus;10%) <span class="rng">0.5439&ndash;0.5730</span></td><td class="num better">2184 (&minus;5%) <span class="rng">2138&ndash;2227</span></td><td class="num better">3646 (&minus;11%) <span class="rng">3565&ndash;3710</span></td><td class="num">1.466 (&minus;0%) <span class="rng">1.459&ndash;1.471</span></td></tr>
+</table>
+<table>
+<tr><th>Variant (seed 1337, renorm, warmup off, lr 2e-3 unless stated)</th><th class="num">Mean train loss vs. LayerNorm</th></tr>
+<tr><td>LayerNorm, lr 2e-3</td><td class="num better">&minus;1.2%</td></tr>
+<tr><td>BW dropout-0 recipe (momentum 0.7, ff 0.8, lr 2e-3)</td><td class="num">+6.5%</td></tr>
+<tr><td>momentum 0.7, ff 0.4</td><td class="num better">&minus;0.5%</td></tr>
+<tr><td>momentum 0.7, ff 0.2</td><td class="num better">&minus;2.1%</td></tr>
+<tr><td>momentum 0.3, ff 0.8</td><td class="num">+5.6%</td></tr>
+<tr><td><b>momentum 0.3, ff 0.4</b></td><td class="num better">&minus;5.7%</td></tr>
+<tr><td>momentum 0.1, ff 0.4</td><td class="num better">&minus;4.9%</td></tr>
+<tr><td>momentum 0.3, ff 0.4, lr 1.5e-3</td><td class="num better">&minus;4.5%</td></tr>
+<tr><td>momentum 0.7, ff 0.4, lr 1e-3</td><td class="num">+2.7%</td></tr>
+</table>
+<ul class="summary">
+  <li><b>Dropout needs more history and more shrinkage.</b> The dropout-0 recipe is 6.5% worse here. Dropout makes each batch's covariance noisy, so the buffer has to average more batches (momentum 0.3 instead of 0.7) and the off-diagonals need stronger shrinkage (<code>fix_factor</code> 0.4 instead of 0.8). Either change alone is not enough.</li>
+  <li><b>The higher learning rate still matters</b> (lr 1e-3: +2.7%), and LayerNorm does not gain from it (&minus;1.2%, within noise).</li>
+</ul>
+
+<h3>Dropout 0.2, 10k steps (cosine schedule stretched to 10k for every run)</h3>
+<table>
+<tr><th>Configuration</th><th class="num">Seeds</th><th class="num">ms / iter</th><th class="num">Mean train loss</th><th class="num">Final train loss</th>
+<th class="num">Steps to loss 0.5</th><th class="num">Steps to loss 0.3</th><th class="num">Best val</th></tr>
+<tr><td>LayerNorm, lr 1e-3</td><td class=num>2</td><td class=num>14.0</td><td class="num">0.672 <span class="rng">0.670&ndash;0.673</span></td><td class="num">0.2129 <span class="rng">0.2111&ndash;0.2147</span></td><td class="num">5567 <span class="rng">5547&ndash;5587</span></td><td class="num">7659 <span class="rng">7598&ndash;7719</span></td><td class="num">1.464 <span class="rng">1.458&ndash;1.469</span></td></tr>
+<tr><td>LayerNorm, lr 2e-3</td><td class=num>1</td><td class=num>14.0</td><td class="num">0.685 (+2%) <span class="rng">0.685&ndash;0.685</span></td><td class="num better">0.2127 (&minus;0%) <span class="rng">0.2127&ndash;0.2127</span></td><td class="num">5783 (+4%) <span class="rng">5783&ndash;5783</span></td><td class="num">7703 (+1%) <span class="rng">7703&ndash;7703</span></td><td class="num">1.451 (&minus;1%) <span class="rng">1.451&ndash;1.451</span></td></tr>
+<tr><td><b>BW, momentum 0.3, ff 0.4, lr 2e-3</b></td><td class=num>2</td><td class=num>27.7</td><td class="num better">0.642 (&minus;4%) <span class="rng">0.639&ndash;0.645</span></td><td class="num better">0.1745 (&minus;18%) <span class="rng">0.1727&ndash;0.1763</span></td><td class="num better">5384 (&minus;3%) <span class="rng">5356&ndash;5413</span></td><td class="num better">7036 (&minus;8%) <span class="rng">7009&ndash;7064</span></td><td class="num">1.467 (+0%) <span class="rng">1.467&ndash;1.468</span></td></tr>
+</table>
+<table>
+<tr><th class="num">Step</th><th class="num">LayerNorm train loss</th><th class="num">BW train loss</th><th class="num">BW vs. LayerNorm</th></tr>
+<tr><td class=num>1000</td><td class=num>1.276</td><td class=num>1.253</td><td class="num better">&minus;1.8%</td></tr>
+<tr><td class=num>2000</td><td class=num>1.069</td><td class=num>1.055</td><td class="num better">&minus;1.3%</td></tr>
+<tr><td class=num>3000</td><td class=num>0.903</td><td class=num>0.890</td><td class="num better">&minus;1.4%</td></tr>
+<tr><td class=num>4000</td><td class=num>0.733</td><td class=num>0.718</td><td class="num better">&minus;2.0%</td></tr>
+<tr><td class=num>5000</td><td class=num>0.575</td><td class=num>0.553</td><td class="num better">&minus;3.9%</td></tr>
+<tr><td class=num>6000</td><td class=num>0.448</td><td class=num>0.411</td><td class="num better">&minus;8.1%</td></tr>
+<tr><td class=num>7000</td><td class=num>0.349</td><td class=num>0.303</td><td class="num better">&minus;13.3%</td></tr>
+<tr><td class=num>8000</td><td class=num>0.279</td><td class=num>0.232</td><td class="num better">&minus;16.8%</td></tr>
+<tr><td class=num>9000</td><td class=num>0.238</td><td class=num>0.194</td><td class="num better">&minus;18.3%</td></tr>
+<tr><td class=num>10000</td><td class=num>0.213</td><td class=num>0.174</td><td class="num better">&minus;18.0%</td></tr>
+</table>
+<div class="legend-line"><span><i style="background:#000"></i>LayerNorm, lr 1e-3 (2 seeds)</span><span><i style="background:#afb8c1"></i>LayerNorm, lr 2e-3 (1 seed)</span><span><i style="background:#1a7f37"></i>BW, momentum 0.3, ff 0.4, lr 2e-3 (2 seeds)</span><span>solid = train, dashed = val</span></div>
+<svg viewBox="0 0 760 320" width="100%" role="img" aria-label="Learning curves, dropout 0.2, 10k steps">
+<line x1="56" x2="744" y1="258.3" y2="258.3" stroke="#d1d9e0"/>
+<text x="50" y="262.3" text-anchor="end" font-size="11" fill="#59636e">0.2</text>
+<line x1="56" x2="744" y1="227.8" y2="227.8" stroke="#d1d9e0"/>
+<text x="50" y="231.8" text-anchor="end" font-size="11" fill="#59636e">0.3</text>
+<line x1="56" x2="744" y1="189.4" y2="189.4" stroke="#d1d9e0"/>
+<text x="50" y="193.4" text-anchor="end" font-size="11" fill="#59636e">0.5</text>
+<line x1="56" x2="744" y1="137.2" y2="137.2" stroke="#d1d9e0"/>
+<text x="50" y="141.2" text-anchor="end" font-size="11" fill="#59636e">1</text>
+<line x1="56" x2="744" y1="106.6" y2="106.6" stroke="#d1d9e0"/>
+<text x="50" y="110.6" text-anchor="end" font-size="11" fill="#59636e">1.5</text>
+<line x1="56" x2="744" y1="85.0" y2="85.0" stroke="#d1d9e0"/>
+<text x="50" y="89.0" text-anchor="end" font-size="11" fill="#59636e">2</text>
+<line x1="56" x2="744" y1="32.8" y2="32.8" stroke="#d1d9e0"/>
+<text x="50" y="36.8" text-anchor="end" font-size="11" fill="#59636e">4</text>
+<text x="56.0" y="296" text-anchor="middle" font-size="11" fill="#59636e">0</text>
+<text x="193.6" y="296" text-anchor="middle" font-size="11" fill="#59636e">2000</text>
+<text x="331.2" y="296" text-anchor="middle" font-size="11" fill="#59636e">4000</text>
+<text x="468.8" y="296" text-anchor="middle" font-size="11" fill="#59636e">6000</text>
+<text x="606.4" y="296" text-anchor="middle" font-size="11" fill="#59636e">8000</text>
+<text x="744.0" y="296" text-anchor="middle" font-size="11" fill="#59636e">10000</text>
+<text x="400.0" y="314" text-anchor="middle" font-size="12">Iteration</text>
+<text x="14" y="148.0" text-anchor="middle" font-size="12" transform="rotate(-90 14 148.0)">Loss (log scale)</text>
+<polyline fill="none" stroke="#000" stroke-width="2.2" points="56.0,28.6 73.2,86.3 90.4,105.1 107.6,113.5 124.8,118.8 142.0,122.6 159.2,125.9 176.4,129.1 193.6,132.2 210.8,135.3 228.0,138.3 245.2,141.7 262.4,144.9 279.6,148.7 296.8,152.5 314.0,156.5 331.2,160.6 348.4,165.2 365.6,169.2 382.8,174.0 400.0,178.8 417.2,182.8 434.4,188.1 451.6,192.9 468.8,197.7 486.0,202.5 503.2,207.5 520.4,212.1 537.6,216.4 554.8,221.1 572.0,225.2 589.2,229.3 606.4,233.2 623.6,236.6 640.8,240.1 658.0,243.0 675.2,245.3 692.4,248.2 709.6,250.2 726.8,252.0 744.0,253.6"/>
+<polyline fill="none" stroke="#000" stroke-width="2.2" stroke-dasharray="6 4" points="56.0,28.6 73.2,82.7 90.4,96.2 107.6,102.3 124.8,105.4 142.0,107.1 159.2,107.9 176.4,108.4 193.6,108.4 210.8,108.1 228.0,107.1 245.2,106.3 262.4,105.6 279.6,104.1 296.8,103.5 314.0,102.0 331.2,100.7 348.4,98.8 365.6,97.7 382.8,96.4 400.0,94.7 417.2,93.4 434.4,92.2 451.6,90.4 468.8,89.4 486.0,88.3 503.2,87.0 520.4,85.3 537.6,84.2 554.8,83.4 572.0,82.2 589.2,81.5 606.4,80.5 623.6,79.6 640.8,78.8 658.0,77.9 675.2,77.5 692.4,77.0 709.6,76.4 726.8,75.9 744.0,75.6"/>
+<polyline fill="none" stroke="#afb8c1" stroke-width="2.2" points="56.0,27.6 73.2,91.8 90.4,106.1 107.6,113.6 124.8,118.3 142.0,122.1 159.2,125.2 176.4,128.1 193.6,130.9 210.8,133.7 228.0,136.4 245.2,139.1 262.4,142.5 279.6,145.4 296.8,148.9 314.0,152.6 331.2,156.4 348.4,160.7 365.6,165.5 382.8,169.2 400.0,173.5 417.2,178.7 434.4,183.4 451.6,188.7 468.8,193.9 486.0,199.2 503.2,204.0 520.4,209.5 537.6,214.4 554.8,218.3 572.0,224.4 589.2,228.6 606.4,233.1 623.6,237.1 640.8,240.3 658.0,243.2 675.2,246.0 692.4,248.4 709.6,249.8 726.8,252.2 744.0,253.7"/>
+<polyline fill="none" stroke="#afb8c1" stroke-width="2.2" stroke-dasharray="6 4" points="56.0,27.7 73.2,86.0 90.4,96.3 107.6,102.0 124.8,105.5 142.0,106.1 159.2,108.2 176.4,108.6 193.6,109.2 210.8,108.2 228.0,108.5 245.2,107.9 262.4,106.5 279.6,105.4 296.8,104.7 314.0,103.3 331.2,102.1 348.4,101.2 365.6,98.7 382.8,97.7 400.0,96.7 417.2,95.1 434.4,93.6 451.6,91.9 468.8,90.3 486.0,89.0 503.2,88.6 520.4,86.5 537.6,85.6 554.8,84.1 572.0,82.8 589.2,81.6 606.4,80.7 623.6,79.8 640.8,79.3 658.0,78.4 675.2,77.8 692.4,77.0 709.6,76.7 726.8,76.3 744.0,75.7"/>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2.2" points="56.0,28.6 73.2,89.8 90.4,105.5 107.6,114.6 124.8,120.2 142.0,123.7 159.2,127.1 176.4,130.1 193.6,133.1 210.8,136.1 228.0,139.3 245.2,142.7 262.4,145.9 279.6,149.7 296.8,153.6 314.0,157.8 331.2,162.1 348.4,166.8 365.6,171.7 382.8,176.8 400.0,181.8 417.2,186.6 434.4,191.9 451.6,197.9 468.8,204.0 486.0,209.4 503.2,215.6 520.4,220.8 537.6,227.2 554.8,231.9 572.0,237.5 589.2,241.9 606.4,247.0 623.6,251.1 640.8,254.9 658.0,258.1 675.2,260.5 692.4,263.3 709.6,265.3 726.8,267.4 744.0,268.6"/>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2.2" stroke-dasharray="6 4" points="56.0,28.6 73.2,85.0 90.4,96.6 107.6,103.2 124.8,106.2 142.0,107.6 159.2,107.7 176.4,108.3 193.6,107.7 210.8,107.6 228.0,106.9 245.2,106.1 262.4,104.9 279.6,103.9 296.8,102.8 314.0,101.8 331.2,100.0 348.4,98.0 365.6,96.7 382.8,95.2 400.0,94.2 417.2,92.1 434.4,90.6 451.6,88.7 468.8,87.2 486.0,86.1 503.2,85.0 520.4,83.3 537.6,81.5 554.8,80.7 572.0,79.2 589.2,78.3 606.4,77.0 623.6,75.8 640.8,75.0 658.0,74.5 675.2,73.5 692.4,73.3 709.6,72.9 726.8,72.4 744.0,71.9"/>
+</svg>
+<p class="figcap"><b>Figure 3:</b> Learning curves, dropout 0.2, 10k steps. Eval-mode train loss (solid; dropout off during eval) and validation loss (dashed), mean over seeds.
+The gap opens in the second half, as the learning rate decays, and settles at about &minus;18%; LayerNorm at lr 2e-3 tracks LayerNorm at 1e-3.
+BW (best) reaches LayerNorm's final train loss (0.213) at step 8417, 16% fewer steps (1.19&times; faster per step; at 2&times; the cost per step, about 1.68&times; LayerNorm's wall-clock time).</p>
+<ul class="summary">
+  <li><b>The longer run doubles the final gain:</b> &minus;18% final train loss on both seeds (0.175 against 0.213), against &minus;10% at 5k. Loss 0.3 is reached about 600 steps sooner.</li>
+  <li><b>Most of the gain comes while the learning rate decays.</b> The gap is &minus;1 to &minus;2% for the first 4000 steps, then grows to &minus;17% by step 8000 and holds. The absolute gap peaks around step 7000&ndash;8000 (0.047) and shrinks slightly by 10k (0.038), so an even longer run is unlikely to widen the relative gain much.</li>
+  <li><b>It is not the learning rate:</b> LayerNorm at 2e-3 ends level with LayerNorm at 1e-3 (0.213).</li>
+  <li><b>Validation:</b> the best validation loss is tied (about 1.46 for all). After that, every model overfits; BW overfits more (final val 2.38 against 2.27).</li>
+</ul>
+</body>
+</html>

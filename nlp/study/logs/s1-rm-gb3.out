@@ -1,0 +1,130 @@
+wandb: Currently logged in as: hsivan (nv-welcome) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run jkshc0vu
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /tmp/wandb_21492790/wandb/run-20261107_234933-jkshc0vu
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run s1-rm-gb3
+wandb: ⭐️ View project at https://wandb.ai/nv-welcome/shakespeare-char
+wandb: 🚀 View run at https://wandb.ai/nv-welcome/shakespeare-char/runs/jkshc0vu
+Using config_name: nanogpt
+Overriding wandb_run_name = s1-rm-gb3
+Overriding out_dir = /tmp/out-s1-rm-gb3
+Overriding normalization_type = full_bw
+Overriding bw_renorm = True
+Overriding bw_renorm_stats = batch
+Overriding bw_group_size = 384
+Overriding abort_ref_log = base-s1_20485372.out
+Overriding abort_ratio = 1.5
+Overriding batch_center_mode = running_mean
+Overriding bw_momentum = 0.7
+Overriding bw_grad_scale = 3.0
+normalization_type: full_bw
+batch_center_mode: running_mean
+bw_iter_calibration: False
+tokens per iteration will be: 16,384
+found vocab_size = 65 (inside data/shakespeare_char/meta.pkl)
+Initializing a new model from scratch
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+number of parameters: 10.65M
+n_groups: 1, group_size: 384
+causality check (training-mode forward): leak=0.000e+00
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 27, with 10,368 parameters
+using fused AdamW: True
+step 0: train loss 4.2874, val loss 4.2823
+step 0: bw input_rms 0.0838 (max 0.1244), output_scale 0.0721, resid_mean_sd 0.5394, running_mean_err 1.0000
+step 0: cond mlp_in 3013 [1.22e+05, 1.34e+03, 1.38e+03, 1.42e+03, 1.52e+03, 1.54e+03]
+step 0: cond attn_in 3.095e+05 [9.45e+16, 1.46e+03, 1.53e+03, 1.54e+03, 1.65e+03, 1.65e+03]
+step 0: cond resid 3009 [1.16e+05, 1.31e+03, 1.38e+03, 1.47e+03, 1.55e+03, 1.55e+03]
+iter 0: loss 4.2784, time 15067.25ms, mfu -100.00%
+iter 10: loss 3.2438, time 116.11ms, mfu 3.21%
+iter 20: loss 2.8083, time 137.60ms, mfu 3.16%
+iter 30: loss 2.6818, time 120.43ms, mfu 3.15%
+iter 40: loss 2.6060, time 121.75ms, mfu 3.14%
+iter 50: loss 2.5586, time 115.17ms, mfu 3.15%
+iter 60: loss 2.5342, time 120.01ms, mfu 3.15%
+iter 70: loss 2.5027, time 117.36ms, mfu 3.15%
+iter 80: loss 2.4604, time 120.52ms, mfu 3.15%
+iter 90: loss 2.4273, time 101.28ms, mfu 3.20%
+iter 100: loss 2.5023, time 124.27ms, mfu 3.18%
+iter 110: loss 2.3512, time 118.64ms, mfu 3.18%
+iter 120: loss 2.4207, time 121.37ms, mfu 3.17%
+iter 130: loss 2.3163, time 123.24ms, mfu 3.15%
+iter 140: loss 2.2333, time 116.73ms, mfu 3.16%
+iter 150: loss 2.1881, time 116.77ms, mfu 3.16%
+iter 160: loss 2.1148, time 119.91ms, mfu 3.15%
+iter 170: loss 2.0196, time 116.79ms, mfu 3.16%
+iter 180: loss 1.9421, time 122.52ms, mfu 3.15%
+iter 190: loss 1.8835, time 118.40ms, mfu 3.15%
+iter 200: loss 1.8540, time 120.24ms, mfu 3.14%
+iter 210: loss 1.8175, time 123.37ms, mfu 3.13%
+iter 220: loss 1.7595, time 117.93ms, mfu 3.13%
+iter 230: loss 1.7184, time 117.08ms, mfu 3.14%
+iter 240: loss 1.7010, time 118.66ms, mfu 3.14%
+step 250: train loss 1.6528, val loss 1.8214
+step 250: bw input_rms 1.5738 (max 2.8648), output_scale 0.4619, resid_mean_sd 0.0816, running_mean_err 0.0613
+step 250: cond mlp_in 3202 [1.64e+04, 3.5e+03, 1.67e+03, 1.43e+03, 2.37e+03, 3.32e+03]
+step 250: cond attn_in 8.666e+06 [3.32e+16, 1.83e+05, 7.66e+04, 5.54e+04, 1.09e+05, 1.5e+05]
+step 250: cond resid 2.84e+05 [7.33e+06, 2.03e+05, 6.72e+04, 7.78e+04, 2.11e+05, 3.2e+05]
+saving checkpoint to /tmp/out-s1-rm-gb3
+iter 250: loss 1.6554, time 15078.39ms, mfu 2.83%
+iter 260: loss 3.1005, time 142.83ms, mfu 2.81%
+iter 270: loss 3.2097, time 124.43ms, mfu 2.82%
+iter 280: loss 3.6725, time 118.86ms, mfu 2.86%
+iter 290: loss 3.7488, time 120.47ms, mfu 2.88%
+iter 300: loss 3.4040, time 118.87ms, mfu 2.91%
+iter 310: loss 3.3035, time 127.06ms, mfu 2.91%
+iter 320: loss 3.4657, time 117.75ms, mfu 2.93%
+iter 330: loss 3.3928, time 118.43ms, mfu 2.96%
+iter 340: loss 3.3630, time 118.06ms, mfu 2.98%
+iter 350: loss 3.1275, time 118.96ms, mfu 2.99%
+iter 360: loss 3.1287, time 117.12ms, mfu 3.01%
+iter 370: loss 3.1814, time 123.14ms, mfu 3.01%
+iter 380: loss 3.2035, time 115.22ms, mfu 3.03%
+iter 390: loss 3.2447, time 116.76ms, mfu 3.05%
+iter 400: loss 3.0124, time 118.19ms, mfu 3.06%
+iter 410: loss 2.9236, time 123.81ms, mfu 3.06%
+iter 420: loss 3.0575, time 118.60ms, mfu 3.06%
+iter 430: loss 2.7943, time 123.93ms, mfu 3.06%
+iter 440: loss 2.7499, time 115.54ms, mfu 3.08%
+iter 450: loss 2.9079, time 122.89ms, mfu 3.07%
+iter 460: loss 2.9495, time 118.66ms, mfu 3.08%
+iter 470: loss 2.8017, time 122.56ms, mfu 3.07%
+iter 480: loss 2.8120, time 119.02ms, mfu 3.08%
+iter 490: loss 2.6941, time 117.67ms, mfu 3.09%
+step 500: train loss 2.6945, val loss 2.6862
+step 500: bw input_rms 35.9354 (max 50.3147), output_scale 0.2751, resid_mean_sd 0.1661, running_mean_err 0.1501
+step 500: cond mlp_in 2.855e+06 [4.3e+06, 1.41e+06, 2.87e+06, 3.89e+06, 3.06e+06, 2.6e+06]
+step 500: cond attn_in 9.045e+09 [3.41e+17, 1.56e+08, 1.35e+08, 3.75e+08, 4.84e+08, 4.19e+08]
+step 500: cond resid 7.209e+08 [1.89e+09, 4.83e+08, 7.11e+08, 7.86e+08, 6.09e+08, 4.53e+08]
+ABORT at step 500: train loss 2.6945 (reference 1.3931, ratio 1.5)
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33ms1-rm-gb3[0m at: [34m[0m
+[1;34mwandb[0m: Find logs at: [1;35m../../../tmp/wandb_21492790/wandb/run-20261107_234933-jkshc0vu/logs[0m

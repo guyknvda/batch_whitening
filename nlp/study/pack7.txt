@@ -1,0 +1,4 @@
+s2-rm-nw-lr2e-3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --learning_rate=2e-3
+s2-rm-nw-lr3e-3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --learning_rate=3e-3
+s2-rm-nw-m0.5 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.5 --bw_warmup=none
+s2-rm-nw-m0.85 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --batch_center_mode=running_mean --bw_momentum=0.85 --bw_warmup=none

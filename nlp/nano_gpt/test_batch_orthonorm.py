@@ -183,3 +183,71 @@ if __name__ == "__main__":
             cov_warmup=False,
         )
         causality_check("Inference", Y_infer, X_infer, True)
+
+    # Stacked layers. A single layer is causal per sequence, but cross-sequence
+    # statistics give a two-hop path: layer 1 writes sequence 0's future into
+    # sequence 1's activations, and layer 2 reads them back into sequence 0's
+    # statistics. Only a stack of >= 2 layers can expose that. The check
+    # perturbs the forward pass rather than reading gradients: with renorm the
+    # gradient flows through the batch statistics by design, while the forward
+    # value must not depend on them.
+    def stacked_leak(center_mode, n_layers, training_mode, renorm, renorm_stats="loo"):
+        torch.manual_seed(0)
+        token_idx = 3
+        X = torch.randn(B, T, C, dtype=torch.float64)
+        X_pert = X.clone()
+        X_pert[0, token_idx + 1:] = torch.randn(T - token_idx - 1, C, dtype=torch.float64)
+        mixers = [
+            torch.randn(C, C, dtype=torch.float64) / C**0.5
+            for _ in range(n_layers)
+        ]
+        outs = []
+        for X_in in (X, X_pert):
+            Y = X_in.clone().requires_grad_(True)
+            with torch.set_grad_enabled(True):
+                for W in mixers:
+                    Y, *_ = batch_orthonorm(
+                        Y @ W,
+                        gamma=gamma.double(),
+                        beta=beta.double(),
+                        running_mean=running_mean.double().clone(),
+                        running_cov=running_cov.double().clone(),
+                        eps=eps,
+                        n_groups=n_groups,
+                        cov_warmup=False,
+                        training_mode=training_mode,
+                        momentum=momentum,
+                        center_mode=center_mode,
+                        renorm=renorm,
+                        renorm_stats=renorm_stats,
+                    )
+            outs.append(Y[0, :token_idx + 1].detach())
+        return (outs[0] - outs[1]).abs().max().item()
+
+    print("\n=== Stacked-layer causality (sequence 0's past vs. its own future) ===")
+    # (label, center_mode, n_layers, training_mode, renorm, renorm_stats, expected causal)
+    cases = []
+    for center_mode in ("leave_one_out", "running_mean"):
+        for n_layers in (1, 2, 3):
+            cases.append(("Training", center_mode, n_layers, True, False, "loo", n_layers == 1))
+        for stats in ("loo", "batch"):
+            for n_layers in (2, 3):
+                cases.append((f"Training renorm-{stats}", center_mode, n_layers, True, True, stats, True))
+    for stats in ("loo", "batch"):
+        cases.append((f"Training renorm-{stats}", "calibrated", 3, True, True, stats, True))
+    cases.append(("Inference", "running_mean", 3, False, False, "loo", True))
+
+    failures = []
+    for label, center_mode, n_layers, training_mode, renorm, stats, expect_causal in cases:
+        leak = stacked_leak(center_mode, n_layers, training_mode, renorm, stats)
+        causal = leak < 1e-12
+        if causal == expect_causal:
+            verdict = "pass" if causal else "pass (known leak detected)"
+        else:
+            verdict = "FAIL: leaks" if expect_causal else "FAIL: known leak not detected"
+            failures.append(f"{label} {center_mode} {n_layers} layer(s)")
+        print(f"{label:22s} {center_mode:14s} {n_layers} layer(s): "
+              f"max |dy_past| = {leak:.2e}  {verdict}")
+    print(f"Stacked-layer causality: all pass={not failures}")
+    if failures:
+        raise SystemExit("causality failures: " + "; ".join(failures))

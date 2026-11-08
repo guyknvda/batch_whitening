@@ -42,6 +42,11 @@
           padding: 10px 14px; margin: 0 0 20px; }
   .todo ul { margin: 6px 0 0; padding-left: 20px; }
   .foot { color: var(--muted); font-size: 12px; margin-top: 28px; }
+  .leak { border: 2px solid var(--gap); border-left-width: 6px; background: #ffebe9; border-radius: 6px;
+          padding: 12px 16px; margin: 0 0 20px; }
+  .leak h2 { color: var(--gap); border: 0; margin: 0 0 6px; padding: 0; }
+  .leak ol, .leak ul { margin: 6px 0; padding-left: 22px; } .leak li { margin: 4px 0; }
+  .leak table { background: #fff; }
 </style>
 </head>
 <body>
@@ -49,15 +54,45 @@
 <h1>Batch Whitening: paper vs. nanoGPT implementation</h1>
 <p class="sub">Paper: <code>nlp/bw_paper</code> (BW for CNNs, Causal BW). Code: <code>nlp/nano_gpt/model.py</code>, <code>train.py</code>.
 Setup: shakespeare_char, B&nbsp;=&nbsp;64, T&nbsp;=&nbsp;256, C&nbsp;=&nbsp;384, 6 layers, no dropout.
+&nbsp;<a href="#renorm">Jump to causal BW (renorm) results &darr;</a>
 &nbsp;<a href="#experiments">Jump to experiments and conclusions &darr;</a>
 &nbsp;<a href="#dropout">Jump to dropout 0.2 experiments &darr;</a>
 &nbsp;<a href="#boost">Jump to gradient-boost experiments &darr;</a></p>
+
+<div class="leak" id="leak">
+<h2>&#9888; Training-mode BW leaks future tokens once two BW layers are stacked</h2>
+<p><b>What happens.</b> Leave-one-out statistics keep a single BW layer causal: sequence <i>b</i>'s statistics come only from the other sequences, so its output at position <i>t</i> depends on its own tokens up to <i>t</i> and on other sequences. With two stacked layers there is a path through another sequence:</p>
+<ol>
+  <li><b>Layer <i>k</i>, sequence <i>s</i>.</b> Its statistics include sequence <i>b</i> at all positions, so <i>s</i>'s activations carry a little of <i>b</i>'s future.</li>
+  <li><b>Layer <i>k</i>+1, sequence <i>b</i>.</b> Its statistics come from <i>s</i>'s layer-<i>k</i> activations, so <i>b</i>'s output at position <i>t</i> now depends on <i>b</i>'s tokens after <i>t</i>.</li>
+</ol>
+<p>This holds for every mode that puts a current-batch statistic in the forward pass (<code>leave_one_out</code>, <code>running_mean</code>, and the current-batch term of <code>calibrated</code>), during warmup as well. Each sequence's weight in the statistics is 1/(B&minus;1), so the leak is much stronger at GPT-2's B&nbsp;=&nbsp;12 than at nanoGPT's B&nbsp;=&nbsp;64. Inference uses the stored statistics and is causal. <code>test_batch_orthonorm.py</code> missed it because it checked a single layer.</p>
+<p><b>Evidence.</b></p>
+<table>
+<tr><th>Check</th><th>Result</th></tr>
+<tr><td>Stacked <code>batch_orthonorm</code> layers, replace sequence 0's future, measure its past (float64)</td><td>1 layer: ~1e-15 (rounding). 2 layers: 1.6e-2 to 3.4e-2. 3 layers: 3.5e-2 to 5.8e-2.</td></tr>
+<tr><td>Trained nanoGPT, replace a sequence's second half with fresh text, measure its first-half loss (<code>diag_leak.py</code>)</td><td>LayerNorm: 0. Best <code>leave_one_out</code>: +0.1% (noise). <code>running_mean</code> group 384, momentum 0.7: <b>+4.5%</b>, so the model uses its own future.</td></tr>
+<tr><td>GPT-2 124M, 1 GPU (B&nbsp;=&nbsp;12)</td><td><code>running_mean</code> at step 2000: training-forward loss <b>1.60</b>, eval-mode loss 9.0 on the same data (LayerNorm baseline: 4.32 vs 4.10). <code>leave_one_out</code> at step 1000: 3.66 vs 7.0. Both cancelled.</td></tr>
+</table>
+<p><b>What it means for the results below.</b> All nanoGPT losses in this report are eval-mode (stored statistics), so they are not inflated by the leak. The training itself may still have used it, mostly in <code>running_mean</code>.</p>
+<p><b>Three ways to fix it.</b> Each makes every activation at position <i>t</i> depend only on tokens at positions &le;&nbsp;<i>t</i>, at any depth.</p>
+<ol>
+  <li><b>Batch Renormalization-style whitening</b> (<code>bw_renorm=True</code>, implemented). The forward pass whitens with the buffers from previous iterations, exactly what inference computes. The gradient still flows through the current-batch mean and covariance: the output is <i>R</i>&nbsp;<i>L<sub>B</sub></i><sup>&minus;1</sup>(<i>x</i>&minus;<i>&mu;<sub>B</sub></i>)&nbsp;+&nbsp;<i>d</i>, with <i>R</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup><i>L<sub>B</sub></i> and <i>d</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>&mu;<sub>B</sub></i>&minus;<i>&mu;<sub>R</sub></i>) held constant (Ioffe, 2017). No extra compute, and training and evaluation compute the same function. Risk: the forward pass uses slightly stale statistics.</li>
+  <li><b>Causal per-position statistics.</b> Statistics at position <i>t</i> come from all sequences, including the sequence itself, but only from positions &le;&nbsp;<i>t</i>. Keeps current-batch statistics and the exact gradient. Early positions have very few samples (B at <i>t</i>&nbsp;=&nbsp;0) and need heavy blending with the running covariance, and each position needs its own whitening matrix. A chunked version, with each chunk using only earlier chunks, is cheaper.</li>
+  <li><b>Reference sub-batch.</b> A quarter of the sequences are whitened with the running statistics. The rest are whitened with statistics computed from that quarter's current activations, with full gradient. Information flows only one way, so there is no path back. Every sequence still counts in the loss. This is <code>calibrated</code> with the calibration batches moved into the graph and the leaky current-batch term removed.</li>
+</ol>
+<p><b>Guards against a repeat.</b> <code>test_batch_orthonorm.py</code> now stacks 1&ndash;3 layers and perturbs one sequence's future in the forward pass. It fails if a mode that should be causal leaks, or if the known leak is no longer detected. <code>train.py</code> runs the same check on the real model at startup (<code>GPT.causal_leak</code>, logged to wandb as <code>causal_leak</code>) and refuses to train if it is nonzero, unless <code>--allow_causal_leak=True</code> is passed.</p>
+<p><b>Option 1 is implemented and tested on nanoGPT</b> (<a href="#renorm">full section</a>). BW stays ahead of the baseline without the leak, by about half as much as before: mean train loss is 7&ndash;8% lower on every seed, against 13% for the leaky version.</p>
+<p><b>Post-fix work (shared statistics, GPT-2 trials, conclusions) is in a separate short report: <a href="bw_causal_report.html">bw_causal_report.html</a>.
+The post-fix nanoGPT study (placement, modes, warmup, boost, conditioning, learning rate) is in <a href="bw_nanogpt_study.html">bw_nanogpt_study.html</a>.</b></p>
+</div>
 
 <div class="todo">
 <b>Done: gradient-boost sweep</b> (<a href="#boost">results</a>). Open follow-ups:
 <ul>
   <li>Done: <code>calibrated</code> now defaults to leave-one-out centering (<code>bw_calib_center=loo</code>); the old blended-mean centering (<code>blend</code>) makes it run away.</li>
   <li>Confirm the dropout gain from boost 0.5 at GPT-2 scale.</li>
+  <li><b>Leak:</b> rerun the best configurations with <code>bw_renorm=True</code> (dropout 0.2, gradient boost), test renorm on GPT-2, and try fix options 2 and 3 (<a href="#leak">above</a>) to see whether they recover the rest of the gain.</li>
 </ul>
 </div>
 
@@ -124,6 +159,102 @@ Setup: shakespeare_char, B&nbsp;=&nbsp;64, T&nbsp;=&nbsp;256, C&nbsp;=&nbsp;384,
   <tr><td class="f">Inference statistics</td><td>Accumulated running statistics.</td><td>Last training batch.</td><td class="s"><span class="chip gap">Gap</span></td><td class="n">Noisy; an EMA buffer would cost nothing in training.</td></tr>
 </table>
 
+<!--RENORM-->
+<h2 id="renorm">Causal BW without the leak (fix option 1, <code>bw_renorm</code>)</h2>
+<p class="sub">Question: once the <a href="#leak">future-token leak</a> is removed, does BW still beat the no-dropout LayerNorm baseline?
+The two best dropout-0 configurations rerun with <code>bw_renorm=True</code>, 3 seeds each, about 6 minutes per run on 1 GPU (wandb names <code>rn1-*</code>).</p>
+
+<h3>How option 1 works</h3>
+<p>Until now the training forward pass whitened each sequence with statistics of the <i>current</i> batch (leave-one-out mean and covariance, partly blended with history in <code>running_mean</code>). That is what lets information cross between sequences and, through two stacked layers, come back as the sequence's own future. Inference was already causal: it whitens with the stored buffers.</p>
+<p>Option 1 is Batch Renormalization (Ioffe, 2017) applied to whitening:</p>
+<ul class="summary">
+  <li><b>Forward pass: the stored statistics.</b> Each BW layer whitens with the running mean <i>&mu;<sub>R</sub></i> and the Cholesky factor <i>L<sub>R</sub></i> of the running covariance, as they were <i>before</i> this batch: <i>y</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>x</i>&nbsp;&minus;&nbsp;<i>&mu;<sub>R</sub></i>). This is exactly what inference computes, so training and evaluation run the same function, and no current-batch value enters the forward pass.</li>
+  <li><b>Buffers: updated as before, after the forward pass.</b> <code>leave_one_out</code> copies this batch's statistics, so the next step whitens with statistics one step old. <code>running_mean</code> keeps its EMA (momentum 0.7 here).</li>
+  <li><b>Gradient: through the current batch.</b> The layer is written as <i>y</i>&nbsp;=&nbsp;<i>R</i>&nbsp;<i>L<sub>B</sub></i><sup>&minus;1</sup>(<i>x</i>&nbsp;&minus;&nbsp;<i>&mu;<sub>B</sub></i>)&nbsp;+&nbsp;<i>d</i>. Here <i>&mu;<sub>B</sub></i>, <i>L<sub>B</sub></i> are the current-batch statistics the mode used before (with gradient), and <i>R</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup><i>L<sub>B</sub></i>, <i>d</i>&nbsp;=&nbsp;<i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>&mu;<sub>B</sub></i>&nbsp;&minus;&nbsp;<i>&mu;<sub>R</sub></i>) are held constant. Substituting gives back <i>L<sub>R</sub></i><sup>&minus;1</sup>(<i>x</i>&nbsp;&minus;&nbsp;<i>&mu;<sub>R</sub></i>), so the value is unchanged. The backward pass, though, sees the dependence of the statistics on the inputs, as batch normalization does. That matters: with that dependence removed (a fully detached mean) the activations ran away in earlier experiments.</li>
+  <li><b>Exact, not approximate.</b> The code returns <code>Y_R + (Z - Z.detach())</code>, with <code>Y_R</code> the whitening with stored statistics and <code>Z</code> the expression above. The forward value is bit-for-bit <code>Y_R</code>, so not even rounding error from the current batch gets in.</li>
+  <li><b>Cost:</b> one extra Cholesky factorization and three triangular solves per layer. Run time is unchanged (about 6 minutes for 5000 steps).</li>
+</ul>
+<p>Every run passed the startup check in <code>train.py</code> with a leak of exactly 0, and <code>test_batch_orthonorm.py</code> confirms 0 for 2 and 3 stacked layers in both modes.</p>
+
+<h3>Results</h3>
+<table>
+<tr><th rowspan="2">Configuration</th><th rowspan="2" class="num">Seeds</th><th rowspan="2" class="num">Mean loss</th><th rowspan="2" class="num">vs. baseline</th>
+<th colspan="4" style="text-align:center">Steps to reach train loss (vs. baseline)</th><th rowspan="2" class="num">Final loss</th><th rowspan="2" class="num">Best val</th></tr>
+<tr><th class="num">1.0</th><th class="num">0.5</th><th class="num">0.2</th><th class="num">0.1</th></tr>
+<tr class="baseline"><td>Baseline: LayerNorm</td><td class="num">3</td><td class="num">0.492 <span class="rng">(0.490&ndash;0.495)</span></td><td class="num">&mdash;</td><td class="num">1171</td><td class="num">1842</td><td class="num">2634</td><td class="num">3953</td><td class="num">0.0832 <span class="rng">(0.0824&ndash;0.0837)</span></td><td class="num">1.545 <span class="rng">(1.537&ndash;1.556)</span></td></tr>
+<tr><td><b>leave_one_out, group 384, fix_factor 0.8, renorm</b></td><td class="num">3</td><td class="num better">0.454 <span class="rng">(0.451&ndash;0.459)</span></td><td class="num better">&minus;7.6%</td><td class="num">1025 <span class="rng">(&minus;13%)</span></td><td class="num">1705 <span class="rng">(&minus;7%)</span></td><td class="num">2655 <span class="rng">(+1%)</span></td><td class="num">4151 <span class="rng">(+5%)</span></td><td class="num">0.0871 <span class="rng">(0.0850&ndash;0.0883)</span></td><td class="num">1.550 <span class="rng">(1.546&ndash;1.555)</span></td></tr>
+<tr><td><b>running_mean, group 384, momentum 0.7, renorm</b></td><td class="num">3</td><td class="num better">0.457 <span class="rng">(0.454&ndash;0.460)</span></td><td class="num better">&minus;7.1%</td><td class="num">1052 <span class="rng">(&minus;10%)</span></td><td class="num">1707 <span class="rng">(&minus;7%)</span></td><td class="num">2610 <span class="rng">(&minus;1%)</span></td><td class="num">4023 <span class="rng">(+2%)</span></td><td class="num">0.0849 <span class="rng">(0.0840&ndash;0.0860)</span></td><td class="num better">1.536 <span class="rng">(1.532&ndash;1.537)</span></td></tr>
+<tr><td>leave_one_out, group 384, fix_factor 0.8, leaky (before)</td><td class="num">3</td><td class="num better">0.428 <span class="rng">(0.421&ndash;0.432)</span></td><td class="num better">&minus;12.9%</td><td class="num">914 <span class="rng">(&minus;22%)</span></td><td class="num">1646 <span class="rng">(&minus;11%)</span></td><td class="num">2615 <span class="rng">(&minus;1%)</span></td><td class="num">3854 <span class="rng">(&minus;3%)</span></td><td class="num">0.0804 <span class="rng">(0.0795&ndash;0.0821)</span></td><td class="num">1.583 <span class="rng">(1.564&ndash;1.594)</span></td></tr>
+<tr><td>running_mean, group 384, momentum 0.7, leaky (before)</td><td class="num">1</td><td class="num better">0.435</td><td class="num better">&minus;11.4%</td><td class="num">960 <span class="rng">(&minus;18%)</span></td><td class="num">1626 <span class="rng">(&minus;12%)</span></td><td class="num">2679 <span class="rng">(+2%)</span></td><td class="num">3832 <span class="rng">(&minus;3%)</span></td><td class="num">0.0787</td><td class="num">1.578</td></tr>
+</table>
+<p class="cap">Mean over seeds, (min&ndash;max) when there are several. All losses are eval mode, so the leaky rows are not inflated by the leak. Mean loss = average train loss over all evals (area under the curve). Bold green = better than the baseline.</p>
+
+<div class="legend-line"><span><i style="background:#000"></i>Baseline (0%)</span><span><i style="background:#1a7f37"></i>leave_one_out, group 384, fix_factor 0.8, renorm</span><span><i style="background:#8250df"></i>running_mean, group 384, momentum 0.7, renorm</span><span><i style="background:#afb8c1"></i>leave_one_out, group 384, fix_factor 0.8, leaky (before)</span></div>
+<svg viewBox="0 0 760 300" width="100%" role="img" aria-label="Train loss relative to baseline">
+<line x1="56" x2="744" y1="260.0" y2="260.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="264.0" text-anchor="end" font-size="11" fill="#59636e">-40%</text>
+<line x1="56" x2="744" y1="199.0" y2="199.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="203.0" text-anchor="end" font-size="11" fill="#59636e">-20%</text>
+<line x1="56" x2="744" y1="138.0" y2="138.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="142.0" text-anchor="end" font-size="11" fill="#59636e">+0%</text>
+<line x1="56" x2="744" y1="77.0" y2="77.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="81.0" text-anchor="end" font-size="11" fill="#59636e">+20%</text>
+<line x1="56" x2="744" y1="16.0" y2="16.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="20.0" text-anchor="end" font-size="11" fill="#59636e">+40%</text>
+<line x1="90.4" x2="744.0" y1="138.0" y2="138.0" stroke="#000" stroke-width="2"/>
+<text x="56.0" y="276" text-anchor="middle" font-size="11" fill="#59636e">0</text>
+<text x="193.6" y="276" text-anchor="middle" font-size="11" fill="#59636e">1000</text>
+<text x="331.2" y="276" text-anchor="middle" font-size="11" fill="#59636e">2000</text>
+<text x="468.8" y="276" text-anchor="middle" font-size="11" fill="#59636e">3000</text>
+<text x="606.4" y="276" text-anchor="middle" font-size="11" fill="#59636e">4000</text>
+<text x="744.0" y="276" text-anchor="middle" font-size="11" fill="#59636e">5000</text>
+<text x="400.0" y="294" text-anchor="middle" font-size="12" fill="#1f2328">Training step</text>
+<text x="14" y="138.0" text-anchor="middle" font-size="12" fill="#1f2328" transform="rotate(-90 14 138.0)">Train loss vs. baseline</text>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2" points="90.4,168.4 124.8,154.9 159.2,152.2 193.6,162.0 228.0,175.5 262.4,188.1 296.8,187.1 331.2,174.7 365.6,156.1 400.0,142.4 434.4,126.9 468.8,119.4 503.2,123.3 537.6,123.8 572.0,121.2 606.4,123.8 640.8,124.0 675.2,128.0 709.6,130.7 744.0,123.9"/>
+<polyline fill="none" stroke="#8250df" stroke-width="2" points="90.4,163.9 124.8,152.3 159.2,149.2 193.6,156.4 228.0,169.8 262.4,183.2 296.8,187.4 331.2,176.0 365.6,163.4 400.0,146.7 434.4,137.4 468.8,133.0 503.2,136.6 537.6,133.9 572.0,131.9 606.4,131.4 640.8,132.8 675.2,134.8 709.6,134.2 744.0,131.8"/>
+<polyline fill="none" stroke="#afb8c1" stroke-width="2" points="90.4,186.7 124.8,161.7 159.2,164.7 193.6,185.3 228.0,205.2 262.4,203.7 296.8,205.5 331.2,183.4 365.6,164.4 400.0,145.2 434.4,138.3 468.8,124.8 503.2,128.9 537.6,141.2 572.0,146.3 606.4,147.7 640.8,152.1 675.2,152.7 709.6,152.0 744.0,148.5"/>
+</svg>
+<p class="cap">Train loss relative to the baseline (mean of 3 seeds), measured in eval mode every 250 steps. Below 0% = better than the baseline.</p>
+
+<div class="legend-line"><span><i style="background:#000"></i>Baseline</span><span><i style="background:#1a7f37"></i>leave_one_out, group 384, fix_factor 0.8, renorm</span><span><i style="background:#8250df"></i>running_mean, group 384, momentum 0.7, renorm</span></div>
+<svg viewBox="0 0 760 300" width="100%" role="img" aria-label="Train loss learning curves">
+<line x1="56" x2="744" y1="260.0" y2="260.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="264.0" text-anchor="end" font-size="11" fill="#59636e">0.05</text>
+<line x1="56" x2="744" y1="218.7" y2="218.7" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="222.7" text-anchor="end" font-size="11" fill="#59636e">0.1</text>
+<line x1="56" x2="744" y1="177.4" y2="177.4" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="181.4" text-anchor="end" font-size="11" fill="#59636e">0.2</text>
+<line x1="56" x2="744" y1="122.8" y2="122.8" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="126.8" text-anchor="end" font-size="11" fill="#59636e">0.5</text>
+<line x1="56" x2="744" y1="81.5" y2="81.5" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="85.5" text-anchor="end" font-size="11" fill="#59636e">1</text>
+<line x1="56" x2="744" y1="40.2" y2="40.2" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="44.2" text-anchor="end" font-size="11" fill="#59636e">2</text>
+<line x1="56" x2="744" y1="16.0" y2="16.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="50" y="20.0" text-anchor="end" font-size="11" fill="#59636e">3</text>
+<text x="56.0" y="276" text-anchor="middle" font-size="11" fill="#59636e">0</text>
+<text x="193.6" y="276" text-anchor="middle" font-size="11" fill="#59636e">1000</text>
+<text x="331.2" y="276" text-anchor="middle" font-size="11" fill="#59636e">2000</text>
+<text x="468.8" y="276" text-anchor="middle" font-size="11" fill="#59636e">3000</text>
+<text x="606.4" y="276" text-anchor="middle" font-size="11" fill="#59636e">4000</text>
+<text x="744.0" y="276" text-anchor="middle" font-size="11" fill="#59636e">5000</text>
+<text x="400.0" y="294" text-anchor="middle" font-size="12" fill="#1f2328">Training step</text>
+<text x="14" y="138.0" text-anchor="middle" font-size="12" fill="#1f2328" transform="rotate(-90 14 138.0)">Train loss (log scale)</text>
+<polyline fill="none" stroke="#000" stroke-width="2" points="90.4,46.7 124.8,61.9 159.2,69.2 193.6,75.5 228.0,84.4 262.4,97.6 296.8,116.0 331.2,136.4 365.6,155.2 400.0,170.8 434.4,183.5 468.8,193.4 503.2,202.0 537.6,209.2 572.0,214.8 606.4,219.6 640.8,223.2 675.2,226.1 709.6,228.2 744.0,229.6"/>
+<polyline fill="none" stroke="#1a7f37" stroke-width="2" points="90.4,53.0 124.8,65.3 159.2,72.1 193.6,80.4 228.0,92.2 262.4,108.3 296.8,126.5 331.2,144.1 365.6,158.9 400.0,171.7 434.4,181.4 468.8,189.9 503.2,199.2 537.6,206.5 572.0,211.6 606.4,216.9 640.8,220.6 675.2,224.2 709.6,226.8 744.0,226.9"/>
+<polyline fill="none" stroke="#8250df" stroke-width="2" points="90.4,52.0 124.8,64.8 159.2,71.4 193.6,79.2 228.0,91.0 262.4,107.2 296.8,126.6 331.2,144.4 365.6,160.4 400.0,172.5 434.4,183.4 468.8,192.5 503.2,201.8 537.6,208.4 572.0,213.7 606.4,218.3 640.8,222.2 675.2,225.5 709.6,227.5 744.0,228.4"/>
+</svg>
+<p class="cap">Learning curves: train loss (eval mode, mean over 3 seeds) on a log axis. Neither renorm configuration reaches the baseline's final loss (0.0832) within 5000 steps, so unlike the leaky runs there is no end-of-training speed-up to mark.</p>
+
+<h3>Conclusions</h3>
+<ul class="summary">
+  <li><b>Causal BW still beats the baseline, by about half as much as the leaky version.</b> Mean loss is 8% lower with <code>leave_one_out</code> and 7% lower with <code>running_mean</code>, on every seed, against 13% for the leaky version.</li>
+  <li><b>The gain is early.</b> Renorm reaches loss 1.0 13% sooner (<code>leave_one_out</code>) and 0.5 7% sooner, ties at 0.2, and is slightly later at 0.1. The final loss is a little worse than the baseline's.</li>
+  <li><b>Validation does not suffer.</b> The best validation loss of renorm <code>running_mean</code> (1.536) is the lowest in the table. The leaky runs were the worst (1.583).</li>
+  <li><b><code>running_mean</code> and <code>leave_one_out</code> are now level.</b> With renorm both whiten with recent stored statistics and differ only in how fast the buffer moves.</li>
+  <li><b>Open question:</b> how much of the lost half was the leak and how much is the cost of whitening with one-step-old statistics. Options 2 and 3 keep current-batch statistics in the forward pass and would separate the two.</li>
+</ul>
+<!--/RENORM-->
 <!--RESULTS-->
 <h2 id="experiments">Experiments and conclusions</h2>
 <p class="sub">Question: does fixing the paper/code differences make BW beat the no-dropout LayerNorm baseline (<code>l965qcs2</code>) in training convergence?
