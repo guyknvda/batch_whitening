@@ -1,0 +1,674 @@
+Using config_name: nanogpt
+Overriding wandb_run_name = a1-cache
+Overriding out_dir = /tmp/out-a1-cache
+Overriding normalization_type = full_bw
+Overriding bw_renorm = True
+Overriding bw_renorm_stats = batch
+Overriding bw_group_size = 384
+Overriding batch_center_mode = running_mean
+Overriding bw_momentum = 0.7
+Overriding bw_warmup = none
+Overriding learning_rate = 0.0015
+Overriding bw_fix_factor = 0.8
+Overriding abort_ref_log = base-s1_20485372.out
+Overriding abort_ratio = 1.5
+normalization_type: full_bw
+batch_center_mode: running_mean
+bw_iter_calibration: False
+tokens per iteration will be: 16,384
+found vocab_size = 65 (inside data/shakespeare_char/meta.pkl)
+Initializing a new model from scratch
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+number of parameters: 10.65M
+n_groups: 1, group_size: 384
+causality check (training-mode forward): leak=0.000e+00
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 27, with 10,368 parameters
+using fused AdamW: True
+wandb: Currently logged in as: hsivan (nv-welcome) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run eebr2raq
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /tmp/wandb_21783967/wandb/run-20261112_043352-eebr2raq
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run a1-cache
+wandb: ⭐️ View project at https://wandb.ai/nv-welcome/shakespeare-char
+wandb: 🚀 View run at https://wandb.ai/nv-welcome/shakespeare-char/runs/eebr2raq
+step 0: train loss 4.2874, val loss 4.2823
+step 0: bw input_rms 0.0838 (max 0.1244), output_scale 0.0721, resid_mean_sd 0.5394, running_mean_err 1.0000
+step 0: cond mlp_in 3013 [1.22e+05, 1.34e+03, 1.38e+03, 1.42e+03, 1.52e+03, 1.54e+03]
+step 0: cond attn_in 3.095e+05 [9.45e+16, 1.46e+03, 1.53e+03, 1.54e+03, 1.65e+03, 1.65e+03]
+step 0: cond resid 3009 [1.16e+05, 1.31e+03, 1.38e+03, 1.47e+03, 1.55e+03, 1.55e+03]
+iter 0: loss 4.2784, time 15933.04ms, mfu -100.00%
+iter 10: loss 3.1888, time 127.35ms, mfu 2.93%
+iter 20: loss 2.8370, time 125.52ms, mfu 2.93%
+iter 30: loss 2.6404, time 114.09ms, mfu 2.97%
+iter 40: loss 2.5747, time 117.38ms, mfu 2.99%
+iter 50: loss 2.5703, time 126.44ms, mfu 2.98%
+iter 60: loss 2.5283, time 117.92ms, mfu 3.00%
+iter 70: loss 2.5573, time 114.20ms, mfu 3.03%
+iter 80: loss 2.5124, time 130.73ms, mfu 3.01%
+iter 90: loss 2.4851, time 119.58ms, mfu 3.02%
+iter 100: loss 2.4308, time 122.28ms, mfu 3.02%
+iter 110: loss 2.3461, time 123.50ms, mfu 3.02%
+iter 120: loss 2.2441, time 120.53ms, mfu 3.03%
+iter 130: loss 2.1848, time 123.56ms, mfu 3.03%
+iter 140: loss 2.0637, time 117.02ms, mfu 3.04%
+iter 150: loss 2.0002, time 113.38ms, mfu 3.07%
+iter 160: loss 1.9334, time 113.74ms, mfu 3.09%
+iter 170: loss 1.8801, time 117.01ms, mfu 3.10%
+iter 180: loss 1.7854, time 109.42ms, mfu 3.13%
+iter 190: loss 1.7502, time 100.68ms, mfu 3.19%
+iter 200: loss 1.7138, time 98.48ms, mfu 3.25%
+iter 210: loss 1.6889, time 99.30ms, mfu 3.30%
+iter 220: loss 1.6238, time 95.57ms, mfu 3.36%
+iter 230: loss 1.5994, time 99.99ms, mfu 3.40%
+iter 240: loss 1.5954, time 99.00ms, mfu 3.43%
+step 250: train loss 1.5611, val loss 1.7504
+step 250: bw input_rms 2.2065 (max 3.2765), output_scale 0.4813, resid_mean_sd 0.0938, running_mean_err 0.1186
+step 250: cond mlp_in 1568 [9.64e+03, 1.13e+03, 860, 939, 1.2e+03, 1.41e+03]
+step 250: cond attn_in 8.35e+06 [5.19e+16, 1.35e+05, 8.09e+04, 7.59e+04, 8.33e+04, 9.5e+04]
+step 250: cond resid 3.856e+05 [7.88e+06, 2.37e+05, 1.58e+05, 1.66e+05, 2.33e+05, 2.88e+05]
+saving checkpoint to /tmp/out-a1-cache
+iter 250: loss 1.5646, time 16435.02ms, mfu 3.09%
+iter 260: loss 1.5262, time 118.90ms, mfu 3.10%
+iter 270: loss 1.5540, time 115.76ms, mfu 3.11%
+iter 280: loss 1.5106, time 122.52ms, mfu 3.10%
+iter 290: loss 1.4850, time 122.90ms, mfu 3.09%
+iter 300: loss 1.4709, time 126.10ms, mfu 3.08%
+iter 310: loss 1.4373, time 116.08ms, mfu 3.09%
+iter 320: loss 1.4511, time 119.72ms, mfu 3.10%
+iter 330: loss 1.4341, time 120.74ms, mfu 3.10%
+iter 340: loss 1.4210, time 116.82ms, mfu 3.10%
+iter 350: loss 1.4076, time 122.69ms, mfu 3.10%
+iter 360: loss 1.4160, time 104.41ms, mfu 3.15%
+iter 370: loss 1.4039, time 98.81ms, mfu 3.21%
+iter 380: loss 1.3979, time 97.20ms, mfu 3.27%
+iter 390: loss 1.4169, time 97.46ms, mfu 3.33%
+iter 400: loss 1.3704, time 98.05ms, mfu 3.37%
+iter 410: loss 1.3559, time 99.82ms, mfu 3.41%
+iter 420: loss 1.3597, time 97.28ms, mfu 3.45%
+iter 430: loss 1.3625, time 108.83ms, mfu 3.45%
+iter 440: loss 1.3366, time 101.56ms, mfu 3.47%
+iter 450: loss 1.3431, time 97.19ms, mfu 3.51%
+iter 460: loss 1.3106, time 100.37ms, mfu 3.53%
+iter 470: loss 1.3460, time 99.24ms, mfu 3.55%
+iter 480: loss 1.3441, time 98.31ms, mfu 3.58%
+iter 490: loss 1.3144, time 101.07ms, mfu 3.59%
+step 500: train loss 1.3029, val loss 1.5791
+step 500: bw input_rms 3.1365 (max 4.6421), output_scale 0.5602, resid_mean_sd 0.1374, running_mean_err 0.0887
+step 500: cond mlp_in 974.1 [2.85e+04, 1.38e+03, 555, 275, 339, 421]
+step 500: cond attn_in 3.28e+06 [6.24e+16, 8.45e+04, 2.78e+04, 1.87e+04, 1.82e+04, 2.51e+04]
+step 500: cond resid 1.2e+05 [1.47e+07, 8.95e+04, 2.82e+04, 2.53e+04, 4.59e+04, 6.93e+04]
+saving checkpoint to /tmp/out-a1-cache
+iter 500: loss 1.2736, time 17468.44ms, mfu 3.23%
+iter 510: loss 1.2873, time 117.81ms, mfu 3.22%
+iter 520: loss 1.3032, time 115.02ms, mfu 3.23%
+iter 530: loss 1.2676, time 120.58ms, mfu 3.21%
+iter 540: loss 1.3138, time 105.36ms, mfu 3.24%
+iter 550: loss 1.2807, time 97.16ms, mfu 3.30%
+iter 560: loss 1.2592, time 100.96ms, mfu 3.34%
+iter 570: loss 1.2658, time 95.39ms, mfu 3.40%
+iter 580: loss 1.2653, time 95.57ms, mfu 3.45%
+iter 590: loss 1.2664, time 99.85ms, mfu 3.48%
+iter 600: loss 1.2248, time 99.21ms, mfu 3.51%
+iter 610: loss 1.2298, time 100.52ms, mfu 3.53%
+iter 620: loss 1.1981, time 98.75ms, mfu 3.55%
+iter 630: loss 1.1972, time 102.06ms, mfu 3.56%
+iter 640: loss 1.2102, time 100.56ms, mfu 3.58%
+iter 650: loss 1.2403, time 100.52ms, mfu 3.59%
+iter 660: loss 1.2107, time 98.91ms, mfu 3.61%
+iter 670: loss 1.2184, time 99.82ms, mfu 3.62%
+iter 680: loss 1.2008, time 100.87ms, mfu 3.63%
+iter 690: loss 1.1933, time 100.39ms, mfu 3.64%
+iter 700: loss 1.1817, time 93.37ms, mfu 3.67%
+iter 710: loss 1.1865, time 100.87ms, mfu 3.67%
+iter 720: loss 1.1821, time 98.23ms, mfu 3.69%
+iter 730: loss 1.1695, time 94.74ms, mfu 3.71%
+iter 740: loss 1.1667, time 98.30ms, mfu 3.72%
+step 750: train loss 1.1515, val loss 1.5452
+step 750: bw input_rms 3.6650 (max 5.0240), output_scale 0.6175, resid_mean_sd 0.1917, running_mean_err 0.0726
+step 750: cond mlp_in 864 [6.03e+04, 2e+03, 705, 250, 149, 132]
+step 750: cond attn_in 1.679e+06 [7.43e+16, 5.45e+04, 1.39e+04, 8.45e+03, 6.09e+03, 7.74e+03]
+step 750: cond resid 5.304e+04 [2.19e+07, 4.72e+04, 1.39e+04, 8.02e+03, 1.1e+04, 1.76e+04]
+saving checkpoint to /tmp/out-a1-cache
+iter 750: loss 1.1739, time 14168.64ms, mfu 3.35%
+iter 760: loss 1.1540, time 88.16ms, mfu 3.44%
+iter 770: loss 1.1263, time 85.73ms, mfu 3.53%
+iter 780: loss 1.1110, time 85.00ms, mfu 3.61%
+iter 790: loss 1.1124, time 81.86ms, mfu 3.71%
+iter 800: loss 1.1284, time 88.72ms, mfu 3.76%
+iter 810: loss 1.0939, time 84.94ms, mfu 3.82%
+iter 820: loss 1.0994, time 86.72ms, mfu 3.87%
+iter 830: loss 1.1045, time 87.20ms, mfu 3.91%
+iter 840: loss 1.0813, time 85.31ms, mfu 3.96%
+iter 850: loss 1.0973, time 82.75ms, mfu 4.01%
+iter 860: loss 1.0663, time 94.32ms, mfu 4.00%
+iter 870: loss 1.0536, time 89.62ms, mfu 4.02%
+iter 880: loss 1.0707, time 91.20ms, mfu 4.03%
+iter 890: loss 1.1133, time 98.86ms, mfu 4.00%
+iter 900: loss 1.0730, time 98.99ms, mfu 3.98%
+iter 910: loss 1.0803, time 97.97ms, mfu 3.96%
+iter 920: loss 1.0621, time 98.95ms, mfu 3.94%
+iter 930: loss 1.0395, time 96.17ms, mfu 3.93%
+iter 940: loss 1.0233, time 99.52ms, mfu 3.92%
+iter 950: loss 1.0320, time 96.97ms, mfu 3.91%
+iter 960: loss 1.0065, time 101.33ms, mfu 3.89%
+iter 970: loss 1.0099, time 94.74ms, mfu 3.89%
+iter 980: loss 1.0084, time 101.68ms, mfu 3.87%
+iter 990: loss 0.9786, time 92.35ms, mfu 3.89%
+step 1000: train loss 0.9784, val loss 1.6447
+step 1000: bw input_rms 4.0219 (max 4.9912), output_scale 0.6644, resid_mean_sd 0.2133, running_mean_err 0.0590
+step 1000: cond mlp_in 908.1 [1.14e+05, 2.93e+03, 970, 241, 102, 70.2]
+step 1000: cond attn_in 9.567e+05 [8.29e+16, 3.63e+04, 7.71e+03, 4.46e+03, 2.97e+03, 2.5e+03]
+step 1000: cond resid 2.533e+04 [2.71e+07, 2.72e+04, 7.39e+03, 4.11e+03, 2.96e+03, 3.98e+03]
+iter 1000: loss 0.9574, time 13156.41ms, mfu 3.50%
+iter 1010: loss 0.9530, time 87.98ms, mfu 3.57%
+iter 1020: loss 0.9436, time 85.97ms, mfu 3.65%
+iter 1030: loss 0.9655, time 71.19ms, mfu 3.81%
+iter 1040: loss 0.9700, time 69.41ms, mfu 3.96%
+iter 1050: loss 0.9300, time 71.00ms, mfu 4.09%
+iter 1060: loss 0.9808, time 69.98ms, mfu 4.22%
+iter 1070: loss 0.9208, time 81.59ms, mfu 4.25%
+iter 1080: loss 0.8995, time 75.04ms, mfu 4.32%
+iter 1090: loss 0.9329, time 75.42ms, mfu 4.39%
+iter 1100: loss 0.8551, time 79.19ms, mfu 4.42%
+iter 1110: loss 0.8635, time 73.93ms, mfu 4.48%
+iter 1120: loss 0.8422, time 77.70ms, mfu 4.51%
+iter 1130: loss 0.9107, time 77.50ms, mfu 4.54%
+iter 1140: loss 0.8836, time 80.60ms, mfu 4.55%
+iter 1150: loss 0.8599, time 74.89ms, mfu 4.59%
+iter 1160: loss 0.8570, time 76.88ms, mfu 4.62%
+iter 1170: loss 0.8396, time 76.64ms, mfu 4.64%
+iter 1180: loss 0.8578, time 76.41ms, mfu 4.67%
+iter 1190: loss 0.8284, time 77.48ms, mfu 4.68%
+iter 1200: loss 0.7666, time 79.30ms, mfu 4.68%
+iter 1210: loss 0.7443, time 76.81ms, mfu 4.70%
+iter 1220: loss 0.7783, time 74.51ms, mfu 4.73%
+iter 1230: loss 0.8265, time 76.50ms, mfu 4.74%
+iter 1240: loss 0.7795, time 74.13ms, mfu 4.77%
+step 1250: train loss 0.7579, val loss 1.8387
+step 1250: bw input_rms 4.2875 (max 4.9669), output_scale 0.7010, resid_mean_sd 0.2339, running_mean_err 0.0555
+step 1250: cond mlp_in 1462 [1.99e+05, 8.1e+03, 1.8e+03, 419, 129, 62.3]
+step 1250: cond attn_in 7.377e+05 [9.88e+16, 3.19e+04, 5.78e+03, 2.96e+03, 1.96e+03, 1.52e+03]
+step 1250: cond resid 1.785e+04 [3.78e+07, 2.09e+04, 5.19e+03, 2.76e+03, 2.03e+03, 1.41e+03]
+iter 1250: loss 0.7491, time 10843.23ms, mfu 4.30%
+iter 1260: loss 0.7568, time 81.74ms, mfu 4.33%
+iter 1270: loss 0.7008, time 76.00ms, mfu 4.38%
+iter 1280: loss 0.7610, time 81.41ms, mfu 4.40%
+iter 1290: loss 0.7321, time 74.07ms, mfu 4.47%
+iter 1300: loss 0.6751, time 73.71ms, mfu 4.53%
+iter 1310: loss 0.7243, time 83.75ms, mfu 4.52%
+iter 1320: loss 0.6775, time 77.92ms, mfu 4.54%
+iter 1330: loss 0.6833, time 80.17ms, mfu 4.56%
+iter 1340: loss 0.6584, time 77.39ms, mfu 4.58%
+iter 1350: loss 0.6404, time 75.48ms, mfu 4.62%
+iter 1360: loss 0.6446, time 80.88ms, mfu 4.62%
+iter 1370: loss 0.6383, time 78.72ms, mfu 4.63%
+iter 1380: loss 0.6736, time 75.40ms, mfu 4.66%
+iter 1390: loss 0.6176, time 78.44ms, mfu 4.67%
+iter 1400: loss 0.6097, time 76.25ms, mfu 4.69%
+iter 1410: loss 0.6449, time 79.66ms, mfu 4.69%
+iter 1420: loss 0.6002, time 78.50ms, mfu 4.70%
+iter 1430: loss 0.6190, time 71.91ms, mfu 4.74%
+iter 1440: loss 0.5959, time 79.11ms, mfu 4.74%
+iter 1450: loss 0.5477, time 67.65ms, mfu 4.82%
+iter 1460: loss 0.5705, time 65.08ms, mfu 4.91%
+iter 1470: loss 0.5635, time 67.28ms, mfu 4.97%
+iter 1480: loss 0.5400, time 67.24ms, mfu 5.03%
+iter 1490: loss 0.5318, time 66.86ms, mfu 5.08%
+step 1500: train loss 0.5419, val loss 2.2118
+step 1500: bw input_rms 4.4027 (max 4.8968), output_scale 0.7248, resid_mean_sd 0.2345, running_mean_err 0.0571
+step 1500: cond mlp_in 1691 [3.11e+05, 1.2e+04, 2.5e+03, 514, 112, 43.5]
+step 1500: cond attn_in 5.56e+05 [7.37e+16, 2.78e+04, 4.46e+03, 2.19e+03, 1.4e+03, 1.05e+03]
+step 1500: cond resid 1.465e+04 [4.45e+07, 1.74e+04, 4.02e+03, 2.06e+03, 1.46e+03, 1.06e+03]
+iter 1500: loss 0.5395, time 10851.83ms, mfu 4.58%
+iter 1510: loss 0.5253, time 77.53ms, mfu 4.60%
+iter 1520: loss 0.4908, time 76.23ms, mfu 4.63%
+iter 1530: loss 0.5506, time 77.74ms, mfu 4.65%
+iter 1540: loss 0.4960, time 74.57ms, mfu 4.68%
+iter 1550: loss 0.4855, time 73.12ms, mfu 4.72%
+iter 1560: loss 0.4977, time 77.24ms, mfu 4.73%
+iter 1570: loss 0.4409, time 76.35ms, mfu 4.75%
+iter 1580: loss 0.4763, time 77.96ms, mfu 4.75%
+iter 1590: loss 0.4538, time 76.83ms, mfu 4.76%
+iter 1600: loss 0.4368, time 78.75ms, mfu 4.76%
+iter 1610: loss 0.4424, time 76.69ms, mfu 4.77%
+iter 1620: loss 0.4310, time 76.95ms, mfu 4.78%
+iter 1630: loss 0.4084, time 71.55ms, mfu 4.82%
+iter 1640: loss 0.4518, time 70.68ms, mfu 4.87%
+iter 1650: loss 0.4161, time 68.58ms, mfu 4.92%
+iter 1660: loss 0.4311, time 68.47ms, mfu 4.98%
+iter 1670: loss 0.4125, time 65.56ms, mfu 5.05%
+iter 1680: loss 0.4160, time 68.61ms, mfu 5.08%
+iter 1690: loss 0.3816, time 66.28ms, mfu 5.14%
+iter 1700: loss 0.4028, time 66.23ms, mfu 5.19%
+iter 1710: loss 0.3970, time 66.64ms, mfu 5.23%
+iter 1720: loss 0.4040, time 67.26ms, mfu 5.26%
+iter 1730: loss 0.3824, time 65.53ms, mfu 5.30%
+iter 1740: loss 0.3977, time 68.29ms, mfu 5.32%
+step 1750: train loss 0.3776, val loss 2.4923
+step 1750: bw input_rms 4.6206 (max 5.0417), output_scale 0.7420, resid_mean_sd 0.2396, running_mean_err 0.0502
+step 1750: cond mlp_in 2423 [3.44e+05, 1.95e+04, 5.75e+03, 753, 139, 50]
+step 1750: cond attn_in 5.404e+05 [7.73e+16, 2.73e+04, 4.81e+03, 2.09e+03, 1.27e+03, 926]
+step 1750: cond resid 1.407e+04 [4.43e+07, 1.66e+04, 3.86e+03, 1.86e+03, 1.26e+03, 1.16e+03]
+iter 1750: loss 0.3894, time 9454.08ms, mfu 4.79%
+iter 1760: loss 0.3588, time 61.63ms, mfu 4.92%
+iter 1770: loss 0.4028, time 59.00ms, mfu 5.06%
+iter 1780: loss 0.3524, time 62.39ms, mfu 5.15%
+iter 1790: loss 0.3710, time 59.40ms, mfu 5.26%
+iter 1800: loss 0.3540, time 58.20ms, mfu 5.38%
+iter 1810: loss 0.3361, time 58.31ms, mfu 5.48%
+iter 1820: loss 0.3335, time 55.08ms, mfu 5.61%
+iter 1830: loss 0.3396, time 53.18ms, mfu 5.75%
+iter 1840: loss 0.3437, time 52.57ms, mfu 5.88%
+iter 1850: loss 0.3053, time 51.51ms, mfu 6.02%
+iter 1860: loss 0.3010, time 53.45ms, mfu 6.11%
+iter 1870: loss 0.3415, time 51.96ms, mfu 6.22%
+iter 1880: loss 0.3141, time 52.85ms, mfu 6.30%
+iter 1890: loss 0.3257, time 52.17ms, mfu 6.39%
+iter 1900: loss 0.3192, time 52.83ms, mfu 6.45%
+iter 1910: loss 0.3267, time 53.29ms, mfu 6.51%
+iter 1920: loss 0.2903, time 52.45ms, mfu 6.57%
+iter 1930: loss 0.2977, time 52.79ms, mfu 6.62%
+iter 1940: loss 0.2844, time 53.47ms, mfu 6.65%
+iter 1950: loss 0.3085, time 54.18ms, mfu 6.68%
+iter 1960: loss 0.3038, time 52.71ms, mfu 6.72%
+iter 1970: loss 0.2901, time 53.15ms, mfu 6.75%
+iter 1980: loss 0.3100, time 61.61ms, mfu 6.68%
+iter 1990: loss 0.3109, time 60.74ms, mfu 6.62%
+step 2000: train loss 0.2895, val loss 2.8443
+step 2000: bw input_rms 4.8183 (max 5.2852), output_scale 0.7443, resid_mean_sd 0.2441, running_mean_err 0.0467
+step 2000: cond mlp_in 2876 [4.44e+05, 2.2e+04, 7.39e+03, 892, 154, 57]
+step 2000: cond attn_in 5.9e+05 [1.5e+17, 2.6e+04, 4.3e+03, 2.11e+03, 1.26e+03, 945]
+step 2000: cond resid 1.459e+04 [5.1e+07, 1.53e+04, 3.67e+03, 1.85e+03, 1.26e+03, 1.45e+03]
+iter 2000: loss 0.2622, time 8939.06ms, mfu 5.96%
+iter 2010: loss 0.2961, time 57.81ms, mfu 6.01%
+iter 2020: loss 0.2956, time 53.05ms, mfu 6.11%
+iter 2030: loss 0.2808, time 54.27ms, mfu 6.19%
+iter 2040: loss 0.2928, time 52.25ms, mfu 6.28%
+iter 2050: loss 0.2541, time 53.95ms, mfu 6.35%
+iter 2060: loss 0.2584, time 52.48ms, mfu 6.42%
+iter 2070: loss 0.2496, time 51.92ms, mfu 6.50%
+iter 2080: loss 0.2648, time 52.86ms, mfu 6.55%
+iter 2090: loss 0.2454, time 52.91ms, mfu 6.60%
+iter 2100: loss 0.2777, time 53.83ms, mfu 6.63%
+iter 2110: loss 0.2364, time 54.16ms, mfu 6.66%
+iter 2120: loss 0.2596, time 53.34ms, mfu 6.69%
+iter 2130: loss 0.2560, time 54.59ms, mfu 6.71%
+iter 2140: loss 0.2352, time 52.73ms, mfu 6.74%
+iter 2150: loss 0.2447, time 52.68ms, mfu 6.78%
+iter 2160: loss 0.2472, time 53.30ms, mfu 6.80%
+iter 2170: loss 0.2388, time 58.34ms, mfu 6.76%
+iter 2180: loss 0.2442, time 60.01ms, mfu 6.70%
+iter 2190: loss 0.2384, time 58.44ms, mfu 6.67%
+iter 2200: loss 0.2446, time 59.13ms, mfu 6.63%
+iter 2210: loss 0.2185, time 60.98ms, mfu 6.58%
+iter 2220: loss 0.2271, time 60.46ms, mfu 6.54%
+iter 2230: loss 0.2261, time 58.96ms, mfu 6.52%
+iter 2240: loss 0.2339, time 57.26ms, mfu 6.52%
+step 2250: train loss 0.2251, val loss 3.0965
+step 2250: bw input_rms 4.9419 (max 5.3991), output_scale 0.7488, resid_mean_sd 0.2444, running_mean_err 0.0395
+step 2250: cond mlp_in 3389 [4.77e+05, 3.12e+04, 8.07e+03, 1.01e+03, 195, 63.9]
+step 2250: cond attn_in 5.867e+05 [1.35e+17, 2.65e+04, 4.78e+03, 2.04e+03, 1.26e+03, 931]
+step 2250: cond resid 1.525e+04 [5.55e+07, 1.68e+04, 3.81e+03, 1.83e+03, 1.18e+03, 1.64e+03]
+iter 2250: loss 0.2189, time 8706.91ms, mfu 5.87%
+iter 2260: loss 0.2275, time 47.63ms, mfu 6.07%
+iter 2270: loss 0.2275, time 52.39ms, mfu 6.17%
+iter 2280: loss 0.2168, time 51.52ms, mfu 6.28%
+iter 2290: loss 0.2214, time 52.79ms, mfu 6.36%
+iter 2300: loss 0.2125, time 53.74ms, mfu 6.41%
+iter 2310: loss 0.2032, time 52.96ms, mfu 6.48%
+iter 2320: loss 0.2167, time 52.90ms, mfu 6.53%
+iter 2330: loss 0.2059, time 52.72ms, mfu 6.59%
+iter 2340: loss 0.2216, time 52.34ms, mfu 6.64%
+iter 2350: loss 0.2118, time 53.22ms, mfu 6.68%
+iter 2360: loss 0.2237, time 60.62ms, mfu 6.62%
+iter 2370: loss 0.2014, time 58.85ms, mfu 6.60%
+iter 2380: loss 0.2112, time 58.20ms, mfu 6.58%
+iter 2390: loss 0.1860, time 57.45ms, mfu 6.57%
+iter 2400: loss 0.1986, time 58.05ms, mfu 6.55%
+iter 2410: loss 0.1847, time 62.66ms, mfu 6.49%
+iter 2420: loss 0.1993, time 61.07ms, mfu 6.45%
+iter 2430: loss 0.1894, time 61.09ms, mfu 6.42%
+iter 2440: loss 0.2034, time 59.76ms, mfu 6.40%
+iter 2450: loss 0.1950, time 59.48ms, mfu 6.39%
+iter 2460: loss 0.1868, time 59.00ms, mfu 6.38%
+iter 2470: loss 0.1765, time 58.32ms, mfu 6.38%
+iter 2480: loss 0.1780, time 58.94ms, mfu 6.38%
+iter 2490: loss 0.1776, time 61.09ms, mfu 6.35%
+step 2500: train loss 0.1865, val loss 3.3292
+step 2500: bw input_rms 5.0325 (max 5.5495), output_scale 0.7542, resid_mean_sd 0.2479, running_mean_err 0.0424
+step 2500: cond mlp_in 3505 [5.81e+05, 3.4e+04, 8.17e+03, 1.16e+03, 163, 60.6]
+step 2500: cond attn_in 5.61e+05 [1.36e+17, 2.74e+04, 4.3e+03, 1.91e+03, 1.19e+03, 856]
+step 2500: cond resid 1.444e+04 [5.38e+07, 1.48e+04, 3.38e+03, 1.69e+03, 1.09e+03, 1.83e+03]
+iter 2500: loss 0.1972, time 8540.53ms, mfu 5.72%
+iter 2510: loss 0.1826, time 47.80ms, mfu 5.93%
+iter 2520: loss 0.1951, time 52.83ms, mfu 6.04%
+iter 2530: loss 0.1875, time 52.59ms, mfu 6.14%
+iter 2540: loss 0.1700, time 53.84ms, mfu 6.22%
+iter 2550: loss 0.1668, time 57.46ms, mfu 6.25%
+iter 2560: loss 0.1797, time 61.39ms, mfu 6.23%
+iter 2570: loss 0.1710, time 60.00ms, mfu 6.23%
+iter 2580: loss 0.1757, time 58.46ms, mfu 6.24%
+iter 2590: loss 0.1800, time 60.43ms, mfu 6.24%
+iter 2600: loss 0.1643, time 62.00ms, mfu 6.21%
+iter 2610: loss 0.1759, time 60.37ms, mfu 6.21%
+iter 2620: loss 0.1689, time 58.04ms, mfu 6.23%
+iter 2630: loss 0.1564, time 58.00ms, mfu 6.25%
+iter 2640: loss 0.1599, time 58.59ms, mfu 6.26%
+iter 2650: loss 0.1664, time 59.08ms, mfu 6.27%
+iter 2660: loss 0.1663, time 61.54ms, mfu 6.25%
+iter 2670: loss 0.1729, time 58.15ms, mfu 6.26%
+iter 2680: loss 0.1648, time 56.64ms, mfu 6.29%
+iter 2690: loss 0.1722, time 59.08ms, mfu 6.30%
+iter 2700: loss 0.1574, time 59.41ms, mfu 6.29%
+iter 2710: loss 0.1612, time 60.12ms, mfu 6.28%
+iter 2720: loss 0.1554, time 61.63ms, mfu 6.26%
+iter 2730: loss 0.1597, time 61.67ms, mfu 6.24%
+iter 2740: loss 0.1475, time 52.96ms, mfu 6.32%
+step 2750: train loss 0.1594, val loss 3.5358
+step 2750: bw input_rms 5.0190 (max 5.6084), output_scale 0.7575, resid_mean_sd 0.2479, running_mean_err 0.0447
+step 2750: cond mlp_in 4093 [7.55e+05, 3.81e+04, 9.87e+03, 1.4e+03, 177, 66.9]
+step 2750: cond attn_in 5.088e+05 [7.84e+16, 2.57e+04, 4.44e+03, 1.93e+03, 1.17e+03, 856]
+step 2750: cond resid 1.478e+04 [5.64e+07, 1.47e+04, 3.4e+03, 1.67e+03, 1.05e+03, 2.09e+03]
+iter 2750: loss 0.1704, time 8578.37ms, mfu 5.69%
+iter 2760: loss 0.1562, time 57.25ms, mfu 5.77%
+iter 2770: loss 0.1611, time 60.37ms, mfu 5.81%
+iter 2780: loss 0.1621, time 59.66ms, mfu 5.86%
+iter 2790: loss 0.1497, time 58.82ms, mfu 5.91%
+iter 2800: loss 0.1428, time 63.46ms, mfu 5.90%
+iter 2810: loss 0.1509, time 58.74ms, mfu 5.95%
+iter 2820: loss 0.1481, time 57.14ms, mfu 6.00%
+iter 2830: loss 0.1465, time 60.55ms, mfu 6.02%
+iter 2840: loss 0.1448, time 61.42ms, mfu 6.02%
+iter 2850: loss 0.1532, time 58.59ms, mfu 6.06%
+iter 2860: loss 0.1403, time 61.55ms, mfu 6.06%
+iter 2870: loss 0.1464, time 60.44ms, mfu 6.07%
+iter 2880: loss 0.1513, time 59.24ms, mfu 6.09%
+iter 2890: loss 0.1457, time 60.19ms, mfu 6.10%
+iter 2900: loss 0.1508, time 60.22ms, mfu 6.11%
+iter 2910: loss 0.1422, time 58.51ms, mfu 6.14%
+iter 2920: loss 0.1481, time 58.34ms, mfu 6.16%
+iter 2930: loss 0.1375, time 53.38ms, mfu 6.24%
+iter 2940: loss 0.1401, time 51.27ms, mfu 6.35%
+iter 2950: loss 0.1323, time 53.33ms, mfu 6.41%
+iter 2960: loss 0.1435, time 53.05ms, mfu 6.47%
+iter 2970: loss 0.1374, time 51.85ms, mfu 6.54%
+iter 2980: loss 0.1346, time 53.58ms, mfu 6.59%
+iter 2990: loss 0.1429, time 52.76ms, mfu 6.63%
+step 3000: train loss 0.1347, val loss 3.7336
+step 3000: bw input_rms 5.0435 (max 5.6523), output_scale 0.7568, resid_mean_sd 0.2488, running_mean_err 0.0459
+step 3000: cond mlp_in 4379 [7.66e+05, 4.55e+04, 1.08e+04, 1.46e+03, 186, 69.1]
+step 3000: cond attn_in 5.891e+05 [1.51e+17, 2.54e+04, 4.64e+03, 2.03e+03, 1.24e+03, 931]
+step 3000: cond resid 1.546e+04 [5.58e+07, 1.59e+04, 3.59e+03, 1.72e+03, 1.1e+03, 2.28e+03]
+iter 3000: loss 0.1353, time 8710.44ms, mfu 5.97%
+iter 3010: loss 0.1398, time 53.75ms, mfu 6.07%
+iter 3020: loss 0.1298, time 58.97ms, mfu 6.10%
+iter 3030: loss 0.1301, time 57.99ms, mfu 6.13%
+iter 3040: loss 0.1290, time 59.40ms, mfu 6.14%
+iter 3050: loss 0.1215, time 59.10ms, mfu 6.16%
+iter 3060: loss 0.1314, time 62.05ms, mfu 6.15%
+iter 3070: loss 0.1236, time 61.30ms, mfu 6.14%
+iter 3080: loss 0.1384, time 60.96ms, mfu 6.14%
+iter 3090: loss 0.1302, time 57.57ms, mfu 6.17%
+iter 3100: loss 0.1266, time 61.61ms, mfu 6.16%
+iter 3110: loss 0.1350, time 59.08ms, mfu 6.17%
+iter 3120: loss 0.1308, time 50.79ms, mfu 6.29%
+iter 3130: loss 0.1305, time 53.13ms, mfu 6.36%
+iter 3140: loss 0.1286, time 51.02ms, mfu 6.46%
+iter 3150: loss 0.1219, time 52.12ms, mfu 6.53%
+iter 3160: loss 0.1167, time 51.73ms, mfu 6.59%
+iter 3170: loss 0.1261, time 52.43ms, mfu 6.65%
+iter 3180: loss 0.1157, time 52.66ms, mfu 6.69%
+iter 3190: loss 0.1207, time 53.14ms, mfu 6.72%
+iter 3200: loss 0.1198, time 53.30ms, mfu 6.75%
+iter 3210: loss 0.1191, time 52.76ms, mfu 6.78%
+iter 3220: loss 0.1086, time 52.44ms, mfu 6.81%
+iter 3230: loss 0.1186, time 52.58ms, mfu 6.84%
+iter 3240: loss 0.1216, time 54.25ms, mfu 6.84%
+step 3250: train loss 0.1180, val loss 3.9196
+step 3250: bw input_rms 4.9785 (max 5.6463), output_scale 0.7607, resid_mean_sd 0.2480, running_mean_err 0.0340
+step 3250: cond mlp_in 4505 [8.66e+05, 4.49e+04, 1.14e+04, 1.5e+03, 185, 68]
+step 3250: cond attn_in 5.507e+05 [1.6e+17, 2.39e+04, 4.11e+03, 1.84e+03, 1.12e+03, 859]
+step 3250: cond resid 1.477e+04 [5.37e+07, 1.42e+04, 3.24e+03, 1.65e+03, 1.05e+03, 2.41e+03]
+iter 3250: loss 0.1175, time 8792.27ms, mfu 6.16%
+iter 3260: loss 0.1227, time 54.56ms, mfu 6.23%
+iter 3270: loss 0.1155, time 61.15ms, mfu 6.22%
+iter 3280: loss 0.1198, time 57.41ms, mfu 6.25%
+iter 3290: loss 0.1159, time 59.27ms, mfu 6.25%
+iter 3300: loss 0.1068, time 58.73ms, mfu 6.26%
+iter 3310: loss 0.1155, time 54.46ms, mfu 6.32%
+iter 3320: loss 0.1097, time 53.78ms, mfu 6.38%
+iter 3330: loss 0.1089, time 54.57ms, mfu 6.42%
+iter 3340: loss 0.1156, time 52.83ms, mfu 6.49%
+iter 3350: loss 0.1110, time 53.08ms, mfu 6.54%
+iter 3360: loss 0.1141, time 52.84ms, mfu 6.59%
+iter 3370: loss 0.1033, time 52.64ms, mfu 6.64%
+iter 3380: loss 0.1062, time 53.36ms, mfu 6.68%
+iter 3390: loss 0.1118, time 53.15ms, mfu 6.71%
+iter 3400: loss 0.1042, time 52.52ms, mfu 6.75%
+iter 3410: loss 0.1126, time 53.07ms, mfu 6.78%
+iter 3420: loss 0.1132, time 52.81ms, mfu 6.80%
+iter 3430: loss 0.1101, time 53.42ms, mfu 6.82%
+iter 3440: loss 0.1085, time 52.30ms, mfu 6.85%
+iter 3450: loss 0.1115, time 53.79ms, mfu 6.86%
+iter 3460: loss 0.1015, time 54.91ms, mfu 6.85%
+iter 3470: loss 0.1054, time 57.14ms, mfu 6.82%
+iter 3480: loss 0.1054, time 57.50ms, mfu 6.79%
+iter 3490: loss 0.1067, time 60.25ms, mfu 6.73%
+step 3500: train loss 0.1057, val loss 4.0168
+step 3500: bw input_rms 4.9419 (max 5.6575), output_scale 0.7602, resid_mean_sd 0.2485, running_mean_err 0.0403
+step 3500: cond mlp_in 4754 [8.99e+05, 5.37e+04, 1.19e+04, 1.6e+03, 185, 67.8]
+step 3500: cond attn_in 5.168e+05 [9.8e+16, 2.5e+04, 4.37e+03, 1.88e+03, 1.12e+03, 848]
+step 3500: cond resid 1.538e+04 [5.76e+07, 1.5e+04, 3.43e+03, 1.68e+03, 1.06e+03, 2.52e+03]
+iter 3500: loss 0.1018, time 8944.46ms, mfu 6.06%
+iter 3510: loss 0.1037, time 48.96ms, mfu 6.21%
+iter 3520: loss 0.1019, time 52.99ms, mfu 6.30%
+iter 3530: loss 0.1060, time 54.06ms, mfu 6.36%
+iter 3540: loss 0.0982, time 52.34ms, mfu 6.43%
+iter 3550: loss 0.1049, time 54.37ms, mfu 6.48%
+iter 3560: loss 0.1019, time 54.69ms, mfu 6.51%
+iter 3570: loss 0.1022, time 52.81ms, mfu 6.56%
+iter 3580: loss 0.0987, time 53.63ms, mfu 6.60%
+iter 3590: loss 0.1075, time 52.52ms, mfu 6.65%
+iter 3600: loss 0.1008, time 52.23ms, mfu 6.70%
+iter 3610: loss 0.0981, time 52.70ms, mfu 6.74%
+iter 3620: loss 0.0980, time 52.91ms, mfu 6.77%
+iter 3630: loss 0.0960, time 51.36ms, mfu 6.82%
+iter 3640: loss 0.0988, time 53.04ms, mfu 6.84%
+iter 3650: loss 0.0957, time 53.77ms, mfu 6.85%
+iter 3660: loss 0.1051, time 58.72ms, mfu 6.80%
+iter 3670: loss 0.1001, time 59.15ms, mfu 6.75%
+iter 3680: loss 0.0987, time 58.90ms, mfu 6.71%
+iter 3690: loss 0.0941, time 61.78ms, mfu 6.64%
+iter 3700: loss 0.1022, time 60.81ms, mfu 6.59%
+iter 3710: loss 0.0986, time 58.02ms, mfu 6.57%
+iter 3720: loss 0.0966, time 55.89ms, mfu 6.58%
+iter 3730: loss 0.0926, time 59.18ms, mfu 6.55%
+iter 3740: loss 0.0981, time 60.20ms, mfu 6.52%
+step 3750: train loss 0.0949, val loss 4.1885
+step 3750: bw input_rms 4.8695 (max 5.4977), output_scale 0.7643, resid_mean_sd 0.2471, running_mean_err 0.0358
+step 3750: cond mlp_in 4479 [8.48e+05, 5.47e+04, 1.21e+04, 1.39e+03, 170, 60.9]
+step 3750: cond attn_in 5.101e+05 [1.16e+17, 2.31e+04, 4.05e+03, 1.86e+03, 1.1e+03, 795]
+step 3750: cond resid 1.425e+04 [5.3e+07, 1.38e+04, 3.14e+03, 1.55e+03, 981, 2.39e+03]
+iter 3750: loss 0.0941, time 8734.37ms, mfu 5.87%
+iter 3760: loss 0.0946, time 48.43ms, mfu 6.05%
+iter 3770: loss 0.0962, time 49.16ms, mfu 6.21%
+iter 3780: loss 0.0934, time 52.67ms, mfu 6.29%
+iter 3790: loss 0.1027, time 52.69ms, mfu 6.37%
+iter 3800: loss 0.0901, time 53.21ms, mfu 6.43%
+iter 3810: loss 0.0967, time 53.67ms, mfu 6.49%
+iter 3820: loss 0.0997, time 52.85ms, mfu 6.54%
+iter 3830: loss 0.0921, time 52.72ms, mfu 6.60%
+iter 3840: loss 0.0895, time 52.95ms, mfu 6.64%
+iter 3850: loss 0.0924, time 59.09ms, mfu 6.61%
+iter 3860: loss 0.0911, time 57.44ms, mfu 6.60%
+iter 3870: loss 0.0930, time 58.72ms, mfu 6.57%
+iter 3880: loss 0.0945, time 60.76ms, mfu 6.53%
+iter 3890: loss 0.0928, time 57.56ms, mfu 6.52%
+iter 3900: loss 0.0876, time 57.99ms, mfu 6.51%
+iter 3910: loss 0.0843, time 59.07ms, mfu 6.49%
+iter 3920: loss 0.0920, time 57.32ms, mfu 6.49%
+iter 3930: loss 0.0930, time 58.57ms, mfu 6.48%
+iter 3940: loss 0.0890, time 60.08ms, mfu 6.45%
+iter 3950: loss 0.0906, time 60.53ms, mfu 6.42%
+iter 3960: loss 0.0925, time 60.50ms, mfu 6.40%
+iter 3970: loss 0.0927, time 58.95ms, mfu 6.39%
+iter 3980: loss 0.0892, time 58.92ms, mfu 6.38%
+iter 3990: loss 0.0868, time 59.24ms, mfu 6.37%
+step 4000: train loss 0.0892, val loss 4.2966
+step 4000: bw input_rms 4.7922 (max 5.4269), output_scale 0.7612, resid_mean_sd 0.2477, running_mean_err 0.0352
+step 4000: cond mlp_in 4657 [8.24e+05, 5.47e+04, 1.21e+04, 1.55e+03, 187, 64.8]
+step 4000: cond attn_in 5.529e+05 [2.05e+17, 2.26e+04, 4.06e+03, 1.76e+03, 1.08e+03, 799]
+step 4000: cond resid 1.431e+04 [5.28e+07, 1.35e+04, 3.14e+03, 1.53e+03, 981, 2.55e+03]
+iter 4000: loss 0.0906, time 8673.76ms, mfu 5.74%
+iter 4010: loss 0.0889, time 47.46ms, mfu 5.95%
+iter 4020: loss 0.0897, time 55.37ms, mfu 6.03%
+iter 4030: loss 0.0941, time 51.41ms, mfu 6.15%
+iter 4040: loss 0.0827, time 59.89ms, mfu 6.16%
+iter 4050: loss 0.0902, time 58.72ms, mfu 6.18%
+iter 4060: loss 0.0894, time 60.16ms, mfu 6.18%
+iter 4070: loss 0.0881, time 61.20ms, mfu 6.17%
+iter 4080: loss 0.0885, time 59.98ms, mfu 6.18%
+iter 4090: loss 0.0870, time 58.46ms, mfu 6.20%
+iter 4100: loss 0.0899, time 58.78ms, mfu 6.21%
+iter 4110: loss 0.0899, time 58.81ms, mfu 6.22%
+iter 4120: loss 0.0902, time 61.61ms, mfu 6.21%
+iter 4130: loss 0.0885, time 61.46ms, mfu 6.19%
+iter 4140: loss 0.0852, time 60.22ms, mfu 6.19%
+iter 4150: loss 0.0902, time 57.41ms, mfu 6.22%
+iter 4160: loss 0.0888, time 57.67ms, mfu 6.25%
+iter 4170: loss 0.0816, time 60.69ms, mfu 6.24%
+iter 4180: loss 0.0852, time 60.58ms, mfu 6.23%
+iter 4190: loss 0.0865, time 58.92ms, mfu 6.24%
+iter 4200: loss 0.0907, time 59.82ms, mfu 6.24%
+iter 4210: loss 0.0854, time 59.07ms, mfu 6.24%
+iter 4220: loss 0.0830, time 58.13ms, mfu 6.26%
+iter 4230: loss 0.0877, time 51.77ms, mfu 6.36%
+iter 4240: loss 0.0835, time 52.86ms, mfu 6.43%
+step 4250: train loss 0.0848, val loss 4.3535
+step 4250: bw input_rms 4.7421 (max 5.4333), output_scale 0.7620, resid_mean_sd 0.2485, running_mean_err 0.0317
+step 4250: cond mlp_in 4570 [8.23e+05, 5.38e+04, 1.19e+04, 1.57e+03, 173, 63.5]
+step 4250: cond attn_in 5.064e+05 [1.02e+17, 2.35e+04, 4.16e+03, 1.83e+03, 1.11e+03, 828]
+step 4250: cond resid 1.444e+04 [5.35e+07, 1.39e+04, 3.16e+03, 1.54e+03, 977, 2.57e+03]
+iter 4250: loss 0.0812, time 8215.67ms, mfu 5.79%
+iter 4260: loss 0.0843, time 37.25ms, mfu 6.21%
+iter 4270: loss 0.0836, time 37.78ms, mfu 6.58%
+iter 4280: loss 0.0828, time 40.74ms, mfu 6.83%
+iter 4290: loss 0.0836, time 40.62ms, mfu 7.07%
+iter 4300: loss 0.0825, time 40.63ms, mfu 7.28%
+iter 4310: loss 0.0833, time 40.85ms, mfu 7.46%
+iter 4320: loss 0.0813, time 40.70ms, mfu 7.63%
+iter 4330: loss 0.0787, time 40.79ms, mfu 7.78%
+iter 4340: loss 0.0869, time 40.87ms, mfu 7.92%
+iter 4350: loss 0.0783, time 40.62ms, mfu 8.04%
+iter 4360: loss 0.0784, time 40.58ms, mfu 8.16%
+iter 4370: loss 0.0813, time 40.52ms, mfu 8.26%
+iter 4380: loss 0.0820, time 40.69ms, mfu 8.35%
+iter 4390: loss 0.0850, time 40.64ms, mfu 8.43%
+iter 4400: loss 0.0790, time 39.91ms, mfu 8.52%
+iter 4410: loss 0.0822, time 40.75ms, mfu 8.59%
+iter 4420: loss 0.0821, time 40.66ms, mfu 8.65%
+iter 4430: loss 0.0829, time 41.00ms, mfu 8.69%
+iter 4440: loss 0.0821, time 40.87ms, mfu 8.73%
+iter 4450: loss 0.0824, time 41.61ms, mfu 8.76%
+iter 4460: loss 0.0849, time 40.58ms, mfu 8.80%
+iter 4470: loss 0.0828, time 41.11ms, mfu 8.83%
+iter 4480: loss 0.0822, time 41.30ms, mfu 8.85%
+iter 4490: loss 0.0835, time 40.74ms, mfu 8.88%
+step 4500: train loss 0.0800, val loss 4.4157
+step 4500: bw input_rms 4.6991 (max 5.3583), output_scale 0.7612, resid_mean_sd 0.2475, running_mean_err 0.0333
+step 4500: cond mlp_in 4541 [8.88e+05, 5.3e+04, 1.22e+04, 1.47e+03, 166, 62.5]
+step 4500: cond attn_in 5.8e+05 [2.8e+17, 2.26e+04, 4.08e+03, 1.74e+03, 1.07e+03, 796]
+step 4500: cond resid 1.428e+04 [5.56e+07, 1.36e+04, 3.1e+03, 1.52e+03, 956, 2.5e+03]
+iter 4500: loss 0.0765, time 5935.28ms, mfu 8.00%
+iter 4510: loss 0.0810, time 36.96ms, mfu 8.20%
+iter 4520: loss 0.0832, time 36.65ms, mfu 8.40%
+iter 4530: loss 0.0784, time 40.49ms, mfu 8.48%
+iter 4540: loss 0.0785, time 40.27ms, mfu 8.56%
+iter 4550: loss 0.0818, time 39.53ms, mfu 8.65%
+iter 4560: loss 0.0808, time 41.03ms, mfu 8.69%
+iter 4570: loss 0.0826, time 40.49ms, mfu 8.74%
+iter 4580: loss 0.0782, time 40.73ms, mfu 8.78%
+iter 4590: loss 0.0762, time 40.90ms, mfu 8.82%
+iter 4600: loss 0.0797, time 40.76ms, mfu 8.85%
+iter 4610: loss 0.0780, time 40.73ms, mfu 8.88%
+iter 4620: loss 0.0837, time 40.84ms, mfu 8.90%
+iter 4630: loss 0.0787, time 40.71ms, mfu 8.93%
+iter 4640: loss 0.0781, time 40.99ms, mfu 8.95%
+iter 4650: loss 0.0736, time 40.93ms, mfu 8.96%
+iter 4660: loss 0.0760, time 40.86ms, mfu 8.98%
+iter 4670: loss 0.0791, time 40.79ms, mfu 8.99%
+iter 4680: loss 0.0765, time 41.28ms, mfu 9.00%
+iter 4690: loss 0.0804, time 40.65ms, mfu 9.02%
+iter 4700: loss 0.0834, time 40.74ms, mfu 9.03%
+iter 4710: loss 0.0728, time 40.76ms, mfu 9.04%
+iter 4720: loss 0.0817, time 40.66ms, mfu 9.05%
+iter 4730: loss 0.0803, time 40.72ms, mfu 9.06%
+iter 4740: loss 0.0833, time 40.51ms, mfu 9.08%
+step 4750: train loss 0.0783, val loss 4.4404
+step 4750: bw input_rms 4.6569 (max 5.2808), output_scale 0.7644, resid_mean_sd 0.2483, running_mean_err 0.0404
+step 4750: cond mlp_in 4561 [8.65e+05, 5.51e+04, 1.21e+04, 1.52e+03, 172, 59.6]
+step 4750: cond attn_in 5.447e+05 [2.1e+17, 2.25e+04, 3.97e+03, 1.71e+03, 1.02e+03, 799]
+step 4750: cond resid 1.404e+04 [5.21e+07, 1.35e+04, 3.06e+03, 1.5e+03, 952, 2.49e+03]
+iter 4750: loss 0.0744, time 6292.60ms, mfu 8.18%
+iter 4760: loss 0.0776, time 36.84ms, mfu 8.37%
+iter 4770: loss 0.0778, time 36.72ms, mfu 8.55%
+iter 4780: loss 0.0760, time 40.28ms, mfu 8.62%
+iter 4790: loss 0.0824, time 40.94ms, mfu 8.67%
+iter 4800: loss 0.0772, time 41.02ms, mfu 8.71%
+iter 4810: loss 0.0795, time 40.84ms, mfu 8.75%
+iter 4820: loss 0.0783, time 40.54ms, mfu 8.80%
+iter 4830: loss 0.0781, time 40.89ms, mfu 8.83%
+iter 4840: loss 0.0760, time 41.06ms, mfu 8.85%
+iter 4850: loss 0.0778, time 40.76ms, mfu 8.88%
+iter 4860: loss 0.0747, time 42.14ms, mfu 8.88%
+iter 4870: loss 0.0774, time 40.42ms, mfu 8.91%
+iter 4880: loss 0.0805, time 40.63ms, mfu 8.94%
+iter 4890: loss 0.0783, time 40.77ms, mfu 8.96%
+iter 4900: loss 0.0818, time 40.71ms, mfu 8.98%
+iter 4910: loss 0.0727, time 40.64ms, mfu 9.00%
+iter 4920: loss 0.0779, time 40.99ms, mfu 9.01%
+iter 4930: loss 0.0732, time 40.47ms, mfu 9.03%
+iter 4940: loss 0.0777, time 40.81ms, mfu 9.04%
+iter 4950: loss 0.0730, time 39.92ms, mfu 9.07%
+iter 4960: loss 0.0745, time 40.67ms, mfu 9.08%
+iter 4970: loss 0.0755, time 40.74ms, mfu 9.09%
+iter 4980: loss 0.0761, time 40.68ms, mfu 9.09%
+iter 4990: loss 0.0727, time 40.62ms, mfu 9.10%
+step 5000: train loss 0.0766, val loss 4.4810
+step 5000: bw input_rms 4.6154 (max 5.2772), output_scale 0.7626, resid_mean_sd 0.2486, running_mean_err 0.0388
+step 5000: cond mlp_in 4494 [8.89e+05, 5.4e+04, 1.19e+04, 1.48e+03, 160, 60.9]
+step 5000: cond attn_in 5.61e+05 [2.6e+17, 2.19e+04, 3.87e+03, 1.71e+03, 1.05e+03, 780]
+step 5000: cond resid 1.383e+04 [5.08e+07, 1.33e+04, 3.02e+03, 1.49e+03, 922, 2.47e+03]
+iter 5000: loss 0.0800, time 6192.45ms, mfu 8.20%
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33ma1-cache[0m at: [34m[0m
+[1;34mwandb[0m: Find logs at: [1;35m../../../tmp/wandb_21783967/wandb/run-20261112_043352-eebr2raq/logs[0m

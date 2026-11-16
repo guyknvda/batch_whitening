@@ -25,6 +25,7 @@ BEST_SEEDS = ["s3-best-lr1.5e-3", "s4-best-lr1.5e-3-s1", "s4-best-lr1.5e-3-s2"]
 LR2_SEEDS = ["s2-rm-nw-lr2e-3-ff0.8", "s3-best-s1", "s3-best-s2"]
 D_LN_SEEDS = ["s3-d-ln", "s5-d-ln-s1", "s5-d-ln-s2"]
 D_BEST_SEEDS = ["s4-d-ff0.4-m0.3", "s5-d-m0.3-s1", "s5-d-m0.3-s2"]
+LN_MS, BW_MS = 14.0, 23.1  # ms / iter on one H100, alone (nlp/study/logs/timing-*.out)
 D10_LN = ["s6-d10k-ln-s1", "s6-d10k-ln-s2"]
 D10_BW = ["s6-d10k-bw-s1", "s6-d10k-bw-s2"]
 
@@ -152,15 +153,15 @@ def seeds_table(groups, base_names, low=0.1, last=5000, high=1.0):
 def final_table():
     return seeds_table([
         ("LayerNorm, lr 1e-3 (baseline)", LN_SEEDS, "14.0"),
-        ("<b>BW, lr 1.5e-3 (recommended)</b>", BEST_SEEDS, "27.7"),
-        ("BW, lr 2e-3", LR2_SEEDS, "27.7"),
+        ("<b>BW, lr 1.5e-3 (recommended)</b>", BEST_SEEDS, "23.1"),
+        ("BW, lr 2e-3", LR2_SEEDS, "23.1"),
     ], LN_SEEDS)
 
 
 def dropout_table():
     return seeds_table([
         ("LayerNorm, lr 1e-3 (vanilla nanoGPT)", D_LN_SEEDS, "14.0"),
-        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D_BEST_SEEDS, "27.7"),
+        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D_BEST_SEEDS, "23.1"),
     ], D_LN_SEEDS, low=0.7)
 
 
@@ -168,7 +169,7 @@ def dropout_10k_table():
     return seeds_table([
         ("LayerNorm, lr 1e-3", D10_LN, "14.0"),
         ("LayerNorm, lr 2e-3", ["s6-d10k-ln-lr2e-3"], "14.0"),
-        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D10_BW, "27.7"),
+        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D10_BW, "23.1"),
     ], D10_LN, low=0.3, last=10000, high=0.5)
 
 
@@ -179,7 +180,7 @@ def catch_up(ln, bw, last):
     st = steps_to({s: (np.mean([R[n]["ev"][s][0] for n in bw]), 0) for s in steps}, target)
     return (f"BW (best) reaches LayerNorm's final train loss ({target:.3f}) at step {st:.0f}, "
             f"{100 * (1 - st / last):.0f}% fewer steps ({last / st:.2f}&times; faster per step; "
-            f"at 2&times; the cost per step, about {2 * st / last:.2f}&times; LayerNorm's wall-clock time).")
+            f"at {BW_MS / LN_MS:.2f}&times; the cost per step, about {BW_MS / LN_MS * st / last:.2f}&times; LayerNorm's wall-clock time).")
 
 
 def gap_table(ln, bw, steps):
@@ -205,6 +206,63 @@ def dropout_variants():
                         ("momentum 0.7, ff 0.4, lr 1e-3", "s4-d-ff0.4-lr1e-3")):
         if name in R and R[name]["ev"]:
             rows.append(f"<tr><td>{label}</td>{cell(rel(name, 's3-d-ln'), status(name))}</tr>")
+    return "\n".join(rows)
+
+
+def ablation_table():
+    rows = []
+    for label, name in (("LayerNorm", "s1-ln"),
+                        ("<b>best recipe</b> (full whitening gradient, ff 0.8; whitening-matrix cache on)", "a1-cache"),
+                        ("gradient through the batch mean only", "a1-sg-mean"),
+                        ("no gradient through batch statistics (fixed linear map)", "a1-sg-none"),
+                        ("no decorrelation: per-channel standardization (ff 0)", "a1-ff0"),
+                        ("per-channel standardization, no statistics gradient", "a1-ff0-sg-none"),
+                        ("no shrinkage: exact whitening (ff 1)", "a1-ff1")):
+        if name not in R:
+            continue
+        c = R[name]["cond"].get("mlp_in", {})
+        ctxt = "".join(f"<td class=num>{c[s]:.0f}</td>" if s in c else "<td class=num>&mdash;</td>" for s in (250, 1000))
+        rows.append(f"<tr><td>{label}</td>{cell(rel(name), status(name))}{ctxt}</tr>")
+    return "\n".join(rows)
+
+
+def token_cv(name, step):
+    m = re.search(rf"^step {step}: bw .*token_norm_cv in ([\d.]+) out ([\d.]+)",
+                  open(os.path.join(LOGS, name + ".out")).read(), re.M)
+    return float(m.group(2)) if m else None
+
+
+def postnorm_table():
+    rows = []
+    for label, name, mlp_in in (("LayerNorm only (baseline)", "s1-ln", "LN(x)"),
+                                ("<b>BW &rarr; LayerNorm</b> (current; two runs)", "c-ln", "LN(BW(x))"),
+                                ("BW &rarr; LayerNorm without gain and bias", "c-ln0", "LN<sub>0</sub>(BW(x))"),
+                                ("BW &rarr; RMSNorm (per-token scale only)", "c-rms", "RMS(BW(x))"),
+                                ("LayerNorm &rarr; BW", "c-lnbefore", "BW(LN(x))"),
+                                ("BW only", "c-none", "BW(x)"),
+                                ("BW only, lr 1e-3", "c-none-lr1e-3", "BW(x)")):
+        if name not in R:
+            continue
+        v = rel(name)
+        txt = cell(v, status(name))
+        if name == "c-ln":
+            txt = (f'<td class="num better">{v:+.1f}% / {rel("a1-cache"):+.1f}%</td>').replace("-", "&minus;")
+        cv = token_cv(name, 250) if name != "s1-ln" else None
+        cvtxt = f"<td class=num>{cv:.2f}</td>" if cv is not None else "<td class=num>&mdash;</td>"
+        rows.append(f"<tr><td>{label}</td><td><code>{mlp_in}</code></td>{txt}{cvtxt}</tr>")
+    return "\n".join(rows)
+
+
+def push_table():
+    rows = []
+    for label, name in (("<b>best recipe</b> (ff 0.8, diagonal target, lr 1.5e-3, warmup 100)", "a1-cache"),
+                        ("covariance gradient &times;1.15", "b-gb1.15"),
+                        ("ff 0.85", "b-ff0.85"), ("ff 0.9", "b-ff0.9"),
+                        ("shrink toward the identity, ff 0.8", "b-id0.8"),
+                        ("shrink toward the identity, ff 0.9", "b-id0.9"),
+                        ("lr 2e-3, learning-rate warmup 300", "b-lr2e-3-wu300")):
+        if name in R:
+            rows.append(f"<tr><td>{label}</td>{cell(rel(name), status(name))}</tr>")
     return "\n".join(rows)
 
 
@@ -316,7 +374,8 @@ TLDR = f"""<b>Summary.</b> Causal BW gives a clear, seed-robust gain over LayerN
   <li><b>Vanilla nanoGPT (dropout 0.2):</b> {-pct(D_BEST_SEEDS, D_LN_SEEDS, low=0.7):.0f}% lower mean and {-pct(D_BEST_SEEDS, D_LN_SEEDS, 1, 0.7):.0f}% lower final train loss on every seed, validation tied. Over 10k steps the final gain grows to &minus;18% (2 seeds). Before the fix the best BW setting was 2% ahead, with the leak.</li>
   <li><b>Recipe:</b> renorm with shared statistics, <code>running_mean</code>, full width (group 384), no warmup, no gradient boost, BW on every MLP input followed by the LayerNorm, and a higher learning rate (BW 1.5e-3; LayerNorm's best is 1e-3).
   No dropout: momentum 0.7, <code>fix_factor</code> 0.8. Dropout 0.2: more history and shrinkage, momentum 0.3, <code>fix_factor</code> 0.4, lr 2e-3.</li>
-  <li><b>Cost:</b> 2&times; per iteration (27.7 against 14.0 ms), so per step BW wins but in wall-clock time it does not yet. BW in only the first 3 blocks costs 1.4&times; but keeps only a third of the gain.</li>
+  <li><b>Cost:</b> 1.65&times; per iteration (23.1 against 14.0 ms, down from 27.7 with two exact speedups), so per step BW wins; in wall-clock time it reaches LayerNorm's final loss in about 1.45&times; LayerNorm's time. BW in only the first 3 blocks keeps only a third of the gain.</li>
+  <li><b>GPT-2 (124M, 5000 steps):</b> BW is ahead at every step but only by 0.03&ndash;0.04 train loss (about 7% fewer steps), at both lr 6e-4 and 1.2e-3; at 1.14&times; per iteration it does not yet win in wall-clock time.</li>
   <li><b>Dropped:</b> <code>calibrated</code> (ties LayerNorm at 2.5&ndash;7&times; the cost), warmup, gradient boost (diverges above 1), BW on the attention input, BW without the following LayerNorm.</li>
 </ul>
 <p>Commands: <code>--normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --batch_center_mode=running_mean --bw_group_size=384 --bw_warmup=none --bw_momentum=0.7 --bw_fix_factor=0.8 --learning_rate=1.5e-3</code>
@@ -381,6 +440,51 @@ Without dropout every model overfits after about step 1000 (validation rises); B
 </table>
 <p class="cap">One seed (1337) per row; seed-to-seed spread is about &plusmn;1%. Each row changes one knob from the row in bold, starting from renorm <code>running_mean</code>, group 384, momentum 0.7, ff 0.9, warmup on, lr 1e-3. Runs stop automatically once they are 50% worse than LayerNorm at the same step.</p>
 
+<h2>What makes BW work: ablations of the best recipe</h2>
+<table>
+<tr><th>Variant (seed 1337, lr 1.5e-3, momentum 0.7)</th><th class="num">Mean train loss vs. LayerNorm</th><th class="num">MLP-input cond, step 250</th><th class="num">step 1000</th></tr>
+{ablation_table()}
+</table>
+<p class="cap">Each row removes one ingredient from the best recipe; the gradient variants change only the backward pass, the forward rule is the same. Condition number: geometric mean over the 6 layers.</p>
+<ul class="summary">
+  <li><b>All three ingredients are needed:</b> decorrelation (ff &gt; 0), shrinkage (ff &lt; 1) and the gradient through the batch <i>covariance</i>. Remove any one and BW is worse than LayerNorm.</li>
+  <li><b>The covariance gradient is the core.</b> Forward whitening alone (no statistics gradient) is unstable and diverges; the mean gradient alone is +17%. The covariance gradient removes from the backward pass the directions the whitening normalizes away, keeping the layer invariant to how the residual stream scales and mixes its channels.</li>
+  <li><b>Better conditioning is not the goal.</b> Exact whitening (ff 1) gives the best-conditioned MLP input (300 at step 1000, against 908 for the best recipe and 2,616 for LayerNorm) and trains worst of the completed runs. Shrinkage compresses the spectrum without flattening it, so the relative strength of the directions survives.</li>
+</ul>
+
+<h2>Do we need the LayerNorm after BW?</h2>
+<table>
+<tr><th>Normalization around the MLP (seed 1337, best recipe, lr 1.5e-3)</th><th>MLP input</th><th class="num">Mean train loss vs. LayerNorm</th><th class="num">Token-norm spread at BW output, step 250</th></tr>
+{postnorm_table()}
+</table>
+<p class="cap">Token-norm spread: standard deviation / mean of the per-token norms at the BW layer's output. The current setting was run twice (identical configuration, GPU nondeterminism): &minus;13.3% and &minus;14.4%, so differences near 1% are noise.</p>
+<ul class="summary">
+  <li><b>Yes, a per-token normalization is needed:</b> BW alone only matches LayerNorm (+1.9%; +6.1% at lr 1e-3). With one after it, BW gains 14%.</li>
+  <li><b>Only its per-token scaling matters.</b> RMSNorm (no centering) and LayerNorm without gain and bias do as well as the full LayerNorm. Centering is redundant (BW already centers) and so are the gains (BW has its own &gamma;).</li>
+  <li><b>Why: the two normalize along different axes.</b> BW applies one linear map to every token, from statistics over the batch: it decorrelates channels but cannot equalize token sizes, since a linear map keeps large tokens large. The MLP (GELU) is not scale-invariant, so tokens of different size see different effective gains. Without the per-token normalization the MLP input is BW's output, whose token norms spread by 23% at step 250, and training is slowest exactly there (loss 1.0 at step 1242 against 983); with it, every MLP input token has the same norm by construction. The per-token normalization also makes the sublayer exactly invariant to its input's scale at the current step, which BW's buffer statistics, one step stale, cannot.</li>
+  <li><b>Order matters:</b> LayerNorm &rarr; BW (&minus;9.8%) is worse than BW &rarr; LayerNorm, because BW after the LayerNorm brings the token-size spread back (27% at step 250).</li>
+  <li><b>Simplification:</b> BW &rarr; RMSNorm or BW &rarr; LayerNorm without affine trains as well with fewer parameters.</li>
+</ul>
+
+<h2>Pushing the recipe further</h2>
+<table>
+<tr><th>Variant (seed 1337)</th><th class="num">Mean train loss vs. LayerNorm</th></tr>
+{push_table()}
+</table>
+<p class="cap">Nothing beats the recipe beyond seed noise (&plusmn;1%): ff 0.8 is the optimum (0.7: &minus;12.5% at lr 2e-3; 0.85: &minus;13.0%; 0.9: &minus;10.5%), shrinking toward the identity is slightly worse, and a longer learning-rate warmup hurts.</p>
+
+<h2>Cost (one H100, alone)</h2>
+<table>
+<tr><th>Configuration</th><th class="num">One layer, forward + backward (ms)</th><th class="num">Training (ms / iter)</th></tr>
+<tr><td>LayerNorm</td><td class=num>0.29</td><td class=num>14.0</td></tr>
+<tr><td>BW, before</td><td class=num>2.14</td><td class=num>27.7</td></tr>
+<tr><td>BW, whitening-matrix cache</td><td class=num>1.81</td><td class=num>25.8</td></tr>
+<tr><td><b>BW, cache + hand-written backward (now the default)</b></td><td class=num>1.27</td><td class=num>23.1</td></tr>
+<tr><td>BW, no statistics gradient (diverges; lower bound)</td><td class=num>1.14</td><td class=num>21.9</td></tr>
+</table>
+<p class="cap">Both speedups are exact. Cache: in <code>running_mean</code> mode the buffer after the update equals this step's whitening covariance bit for bit, so next step's buffer whitening matrix is this step's batch one, which skips one Cholesky and one triangular inverse per layer (rerun of the best recipe: &minus;14.4% against &minus;14.3%). Hand-written backward (<code>_RenormWhitenFn</code>): same forward bit for bit and the same gradient (10<sup>&minus;16</sup> in float64), with 5 instead of 7 activation-sized matrix products and no extra elementwise passes.
+With 12% fewer steps to LayerNorm's final loss, BW now takes about 1.45&times; LayerNorm's wall-clock time to reach it (was 1.76&times;). <code>nlp/nano_gpt/bench_bw.py</code> measures the per-layer time.</p>
+
 <h2>Conditioning: does BW help the MLP input, and does it predict the gain?</h2>
 <table>
 <tr><th rowspan="2">Model</th><th colspan="2" class="num">Step 250</th><th colspan="2" class="num">Step 1000</th><th colspan="2" class="num">Step 5000</th><th rowspan="2" class="num">Mean train loss vs. LayerNorm</th></tr>
@@ -417,6 +521,19 @@ Without dropout every model overfits after about step 1000 (validation rises); B
 The gap opens in the second half, as the learning rate decays, and settles at about &minus;18%; LayerNorm at lr 2e-3 tracks LayerNorm at 1e-3.
 {catch_up(D10_LN, D10_BW, 10000)}</p>
 {{DROPOUT10K_TEXT}}
+
+<h2>Does it carry over to GPT-2?</h2>
+<table>
+<tr><th>GPT-2 124M, OpenWebText, 1 GPU, 5000 steps (cosine to 5000)</th><th class="num">LayerNorm train loss</th><th class="num">BW train loss</th><th class="num">Gap</th><th class="num">Steps for BW to reach LayerNorm's final loss</th></tr>
+<tr><td>lr 6e-4 (GPT-2 default), warmup 300</td><td class=num>3.512</td><td class=num>3.482</td><td class=num>&minus;0.030</td><td class=num>&asymp;4690</td></tr>
+<tr><td>lr 1.2e-3, warmup 500</td><td class=num>3.450</td><td class=num>3.414</td><td class=num>&minus;0.036</td><td class=num>&asymp;4640</td></tr>
+</table>
+<p class="cap">One seed each. BW: renorm, shared statistics, <code>running_mean</code>, group 768, momentum 0.3, ff 0.4, BW in the first 6 blocks, fused backward. 0.96 against 0.84 s / iter (1.14&times;). Logs: <code>nlp/study/gpt2_logs</code>.</p>
+<ul class="summary">
+  <li><b>BW is ahead at every step, but by little:</b> &minus;0.24 at step 500, a steady &minus;0.03 from step 2000. Unlike nanoGPT with dropout, the gap does not grow while the learning rate decays.</li>
+  <li><b>Both tolerate twice the learning rate</b> and gain about 0.06 from it; BW gains slightly more (gap 0.036 against 0.030).</li>
+  <li><b>Per step BW wins (about 7% fewer steps); per GPU-hour it still loses</b>, because it costs 1.14&times; per iteration. Cutting that cost is the next lever.</li>
+</ul>
 </body>
 </html>
 """

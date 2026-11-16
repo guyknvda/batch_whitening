@@ -91,6 +91,11 @@ bw_layers = 0  # BW only in the first bw_layers blocks; 0 -> all
 bw_where = ""  # comma-separated block indices with BW, e.g. "0,1"; overrides bw_layers
 bw_sites = "mlp"  # BW on the "mlp" input, the "attn" input, or "both"
 bw_ln_after = True  # False drops the LayerNorm after each BW layer
+bw_post_norm = "ln"  # around BW: "ln", "rms", "ln_noaffine", "none" (after BW) or "ln_before" (LN -> BW)
+bw_stat_grad = "full"  # renorm batch: statistics with gradient, "full", "mean" or "none" (ablation)
+bw_renorm_cache = True  # renorm batch: reuse last step's whitening matrix when exact
+bw_shrink_target = "diag"  # renorm batch: shrink the covariance toward "diag" or "identity"
+bw_renorm_fused = True  # renorm batch: hand-written backward (same value and gradient, faster)
 log_conditioning = True  # log covariance condition numbers of the sublayer inputs at each eval
 abort_ref_log = ""  # stop early if eval train loss exceeds abort_ratio x this log's loss at the same step
 abort_ratio = 1.3
@@ -337,7 +342,9 @@ model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=bloc
                   bw_renorm=bw_renorm,
                   bw_renorm_stats=bw_renorm_stats,
                   bw_layers=bw_layers, bw_where=bw_where, bw_sites=bw_sites,
-                  bw_ln_after=bw_ln_after) # start with model_args from command line
+                  bw_ln_after=bw_ln_after, bw_post_norm=bw_post_norm, bw_stat_grad=bw_stat_grad,
+                  bw_renorm_cache=bw_renorm_cache, bw_shrink_target=bw_shrink_target,
+                  bw_renorm_fused=bw_renorm_fused) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -521,11 +528,13 @@ def bw_health():
         Xg = Xi.view(B_, T_, ng, gs)
         fresh = Xg.mean(dim=(0, 1))
         buf = mod.running_mean.float().view(ng, gs)
+        cv = lambda t: (lambda n: (n.std() / n.mean()).item())(t.reshape(-1, C_).norm(dim=1))
         rows.append((
             Xi.pow(2).mean().sqrt().item(),                       # input rms
             sd.item(),                                            # output scale
             (Yg.mean(dim=(0, 1)).norm() / (sd * C_ ** 0.5)).item(),  # resid mean, sd
             ((buf - fresh).norm() / fresh.norm().clamp_min(1e-12)).item(),
+            cv(Xi), cv(out.float()),                              # spread of per-token norms
         ))
 
     hs = [l.register_forward_hook(hook) for l in layers]
@@ -543,6 +552,8 @@ def bw_health():
         "bw/output_scale": a[:, 1].mean(),
         "bw/resid_mean_sd": a[:, 2].mean(),
         "bw/running_mean_err": a[:, 3].mean(),
+        "bw/token_norm_cv_in": a[:, 4].mean(),
+        "bw/token_norm_cv_out": a[:, 5].mean(),
     }
 
 
@@ -567,7 +578,7 @@ def conditioning():
     for l, blk in enumerate(raw_model.transformer.h):
         hooks.append(blk.mlp.c_fc.register_forward_hook(grab("mlp_in", l)))
         hooks.append(blk.attn.c_attn.register_forward_hook(grab("attn_in", l)))
-        hooks.append(blk.bw_2.register_forward_hook(grab("resid", l)))
+        hooks.append(blk.pre_2.register_forward_hook(grab("resid", l)))
     model.eval()
     try:
         Xh, _ = get_batch('train')
@@ -604,7 +615,9 @@ while True:
                   f"(max {health['bw/input_rms_max']:.4f}), "
                   f"output_scale {health['bw/output_scale']:.4f}, "
                   f"resid_mean_sd {health['bw/resid_mean_sd']:.4f}, "
-                  f"running_mean_err {health['bw/running_mean_err']:.4f}")
+                  f"running_mean_err {health['bw/running_mean_err']:.4f}, "
+                  f"token_norm_cv in {health['bw/token_norm_cv_in']:.3f} "
+                  f"out {health['bw/token_norm_cv_out']:.3f}")
         cond = conditioning() if log_conditioning else {}
         for k, v in cond.items():
             gm = float(np.exp(np.mean(np.log(v))))

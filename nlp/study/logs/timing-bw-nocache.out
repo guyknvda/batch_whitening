@@ -1,0 +1,117 @@
+Using config_name: nanogpt
+Overriding max_iters = 600
+Overriding eval_interval = 10000
+Overriding wandb_log = False
+Overriding log_conditioning = False
+Overriding normalization_type = full_bw
+Overriding bw_renorm = True
+Overriding bw_renorm_stats = batch
+Overriding bw_group_size = 384
+Overriding batch_center_mode = running_mean
+Overriding bw_momentum = 0.7
+Overriding bw_warmup = none
+Overriding bw_fix_factor = 0.8
+Overriding bw_renorm_cache = False
+normalization_type: full_bw
+batch_center_mode: running_mean
+bw_iter_calibration: False
+tokens per iteration will be: 16,384
+found vocab_size = 65 (inside data/shakespeare_char/meta.pkl)
+Initializing a new model from scratch
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+number of parameters: 10.65M
+n_groups: 1, group_size: 384
+causality check (training-mode forward): leak=0.000e+00
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 27, with 10,368 parameters
+using fused AdamW: True
+step 0: train loss 4.2874, val loss 4.2823
+step 0: bw input_rms 0.0838 (max 0.1244), output_scale 0.0721, resid_mean_sd 0.5394, running_mean_err 1.0000
+iter 0: loss 4.2784, time 4206.83ms, mfu -100.00%
+iter 10: loss 3.2635, time 27.38ms, mfu 13.62%
+iter 20: loss 2.8479, time 29.59ms, mfu 13.51%
+iter 30: loss 2.6659, time 27.57ms, mfu 13.51%
+iter 40: loss 2.6066, time 27.84ms, mfu 13.50%
+iter 50: loss 2.5645, time 27.66ms, mfu 13.50%
+iter 60: loss 2.5695, time 28.05ms, mfu 13.48%
+iter 70: loss 2.5021, time 27.65ms, mfu 13.48%
+iter 80: loss 2.4931, time 27.71ms, mfu 13.48%
+iter 90: loss 2.4979, time 27.62ms, mfu 13.48%
+iter 100: loss 2.4648, time 27.88ms, mfu 13.47%
+iter 110: loss 2.4456, time 27.64ms, mfu 13.47%
+iter 120: loss 2.3923, time 27.91ms, mfu 13.46%
+iter 130: loss 2.3222, time 27.60ms, mfu 13.46%
+iter 140: loss 2.2144, time 27.72ms, mfu 13.46%
+iter 150: loss 2.1577, time 27.64ms, mfu 13.46%
+iter 160: loss 2.0582, time 27.95ms, mfu 13.45%
+iter 170: loss 1.9852, time 27.69ms, mfu 13.45%
+iter 180: loss 1.9506, time 27.66ms, mfu 13.46%
+iter 190: loss 1.8683, time 27.57ms, mfu 13.46%
+iter 200: loss 1.8205, time 28.32ms, mfu 13.43%
+iter 210: loss 1.7782, time 27.57ms, mfu 13.44%
+iter 220: loss 1.7315, time 27.69ms, mfu 13.44%
+iter 230: loss 1.6425, time 27.63ms, mfu 13.45%
+iter 240: loss 1.6512, time 27.70ms, mfu 13.45%
+iter 250: loss 1.6026, time 27.62ms, mfu 13.45%
+iter 260: loss 1.5612, time 27.80ms, mfu 13.45%
+iter 270: loss 1.5809, time 27.63ms, mfu 13.45%
+iter 280: loss 1.5403, time 27.61ms, mfu 13.46%
+iter 290: loss 1.5569, time 27.48ms, mfu 13.47%
+iter 300: loss 1.4782, time 27.63ms, mfu 13.47%
+iter 310: loss 1.5025, time 27.63ms, mfu 13.47%
+iter 320: loss 1.4512, time 27.70ms, mfu 13.47%
+iter 330: loss 1.4296, time 27.55ms, mfu 13.48%
+iter 340: loss 1.4236, time 27.58ms, mfu 13.48%
+iter 350: loss 1.4135, time 27.60ms, mfu 13.48%
+iter 360: loss 1.4463, time 27.59ms, mfu 13.49%
+iter 370: loss 1.4271, time 27.52ms, mfu 13.49%
+iter 380: loss 1.3773, time 27.60ms, mfu 13.49%
+iter 390: loss 1.3957, time 27.60ms, mfu 13.50%
+iter 400: loss 1.3922, time 27.56ms, mfu 13.50%
+iter 410: loss 1.3812, time 27.61ms, mfu 13.50%
+iter 420: loss 1.3842, time 27.56ms, mfu 13.50%
+iter 430: loss 1.3909, time 27.61ms, mfu 13.50%
+iter 440: loss 1.3720, time 27.72ms, mfu 13.50%
+iter 450: loss 1.3452, time 27.58ms, mfu 13.50%
+iter 460: loss 1.3504, time 29.80ms, mfu 13.40%
+iter 470: loss 1.3214, time 27.54ms, mfu 13.41%
+iter 480: loss 1.2896, time 27.71ms, mfu 13.42%
+iter 490: loss 1.2890, time 27.66ms, mfu 13.42%
+iter 500: loss 1.3153, time 27.64ms, mfu 13.43%
+iter 510: loss 1.3047, time 27.66ms, mfu 13.43%
+iter 520: loss 1.2941, time 27.52ms, mfu 13.45%
+iter 530: loss 1.2939, time 27.59ms, mfu 13.45%
+iter 540: loss 1.2899, time 27.72ms, mfu 13.45%
+iter 550: loss 1.3093, time 27.47ms, mfu 13.46%
+iter 560: loss 1.3010, time 27.63ms, mfu 13.47%
+iter 570: loss 1.2472, time 27.36ms, mfu 13.48%
+iter 580: loss 1.2469, time 27.65ms, mfu 13.48%
+iter 590: loss 1.2233, time 27.63ms, mfu 13.48%
+iter 600: loss 1.2677, time 27.63ms, mfu 13.48%

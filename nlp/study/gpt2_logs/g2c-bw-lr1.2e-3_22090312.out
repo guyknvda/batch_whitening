@@ -1,0 +1,644 @@
+Job ID: 22090312
+Node: pool0-01823
+Args: --wandb_run_name=gpt2-1gpu-cos5k-bw-mom0.3-ff0.4-l6-lr1.2e-3 --normalization_type=full_bw --batch_center_mode=running_mean --bw_group_size=768 --bw_renorm=True --bw_renorm_stats=batch --bw_warmup=none --bw_fix_factor=0.4 --bw_momentum=0.3 --bw_layers=6 --max_iters=5000 --lr_decay_iters=5000 --warmup_iters=500 --learning_rate=1.2e-3 --min_lr=1.2e-4 --eval_interval=500 --eval_iters=100 --abort_ref_log=g2c-ln_22080264.out --abort_ratio=1.3
+Using config_name: gpt2
+Overriding config_name = gpt2
+Overriding gradient_accumulation_steps = 10
+Overriding out_dir = /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+Overriding wandb_run_name = gpt2-1gpu-cos5k-bw-mom0.3-ff0.4-l6-lr1.2e-3
+Overriding normalization_type = full_bw
+Overriding batch_center_mode = running_mean
+Overriding bw_group_size = 768
+Overriding bw_renorm = True
+Overriding bw_renorm_stats = batch
+Overriding bw_warmup = none
+Overriding bw_fix_factor = 0.4
+Overriding bw_momentum = 0.3
+Overriding bw_layers = 6
+Overriding max_iters = 5000
+Overriding lr_decay_iters = 5000
+Overriding warmup_iters = 500
+Overriding learning_rate = 0.0012
+Overriding min_lr = 0.00012
+Overriding eval_interval = 500
+Overriding eval_iters = 100
+Overriding abort_ref_log = g2c-ln_22080264.out
+Overriding abort_ratio = 1.3
+normalization_type: full_bw
+batch_center_mode: running_mean
+bw_iter_calibration: False
+tokens per iteration will be: 122,880
+Initializing a new model from scratch
+defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+-----------BW triage------------ 
+
+raw block size: 11
+B, T, C, mu=(32, 64, 768, 0.7) --> blk_size = 12, momentum=0.7
+number of parameters: 123.60M
+n_groups: 1, group_size: 768
+causality check (training-mode forward): leak=0.000e+00
+num decayed parameter tensors: 50, with 124,354,560 parameters
+num non-decayed parameter tensors: 39, with 29,952 parameters
+using fused AdamW: True
+wandb: Currently logged in as: hsivan (nv-welcome) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 5b9s3jas
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /home/hsivan/batch_whitening/wandb/run-20261116_021203-5b9s3jas
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run gpt2-1gpu-cos5k-bw-mom0.3-ff0.4-l6-lr1.2e-3
+wandb: ⭐️ View project at https://wandb.ai/nv-welcome/owt
+wandb: 🚀 View run at https://wandb.ai/nv-welcome/owt/runs/5b9s3jas
+step 0: train loss 10.9888, val loss 10.9913
+step 0: bw input_rms 0.1188 (max 0.1837), output_scale 0.1004, resid_mean_sd 0.5427, running_mean_err 1.0000, token_norm_cv in 0.038 out 0.038
+step 0: cond mlp_in 465.3 [104, 271, 352, 444, 490, 533, 579, 600, 646, 686, 746, 780]
+step 0: cond attn_in 469.5 [110, 280, 367, 450, 490, 540, 579, 605, 630, 688, 743, 757]
+step 0: cond resid 464.6 [102, 271, 359, 443, 482, 530, 577, 596, 642, 688, 751, 786]
+iter 0: loss 10.9717, time 12041.46ms, mfu -100.00%
+iter 10: loss 9.6892, time 962.27ms, mfu 34.99%
+iter 20: loss 9.2125, time 965.66ms, mfu 34.97%
+iter 30: loss 8.5789, time 951.88ms, mfu 35.01%
+iter 40: loss 7.9959, time 955.46ms, mfu 35.04%
+iter 50: loss 7.5860, time 964.84ms, mfu 35.02%
+iter 60: loss 6.9260, time 971.98ms, mfu 34.98%
+iter 70: loss 6.8276, time 962.03ms, mfu 34.99%
+iter 80: loss 6.5179, time 962.80ms, mfu 34.98%
+iter 90: loss 6.6503, time 956.18ms, mfu 35.01%
+iter 100: loss 6.3511, time 968.65ms, mfu 34.98%
+iter 110: loss 6.3332, time 961.21ms, mfu 34.99%
+iter 120: loss 6.1841, time 963.90ms, mfu 34.98%
+iter 130: loss 6.0775, time 956.52ms, mfu 35.00%
+iter 140: loss 6.1605, time 958.02ms, mfu 35.02%
+iter 150: loss 6.1964, time 970.84ms, mfu 34.98%
+iter 160: loss 5.9259, time 957.34ms, mfu 35.00%
+iter 170: loss 5.9355, time 962.39ms, mfu 35.00%
+iter 180: loss 5.6749, time 976.17ms, mfu 34.95%
+iter 190: loss 5.7987, time 995.52ms, mfu 34.84%
+iter 200: loss 6.0647, time 957.01ms, mfu 34.87%
+iter 210: loss 5.7780, time 958.09ms, mfu 34.90%
+iter 220: loss 5.6785, time 958.99ms, mfu 34.92%
+iter 230: loss 5.6290, time 963.96ms, mfu 34.92%
+iter 240: loss 5.7792, time 974.73ms, mfu 34.88%
+iter 250: loss 5.4086, time 965.41ms, mfu 34.88%
+iter 260: loss 5.5675, time 960.81ms, mfu 34.90%
+iter 270: loss 5.5038, time 959.04ms, mfu 34.92%
+iter 280: loss 5.4844, time 958.58ms, mfu 34.94%
+iter 290: loss 5.3627, time 956.53ms, mfu 34.96%
+iter 300: loss 5.4860, time 957.74ms, mfu 34.98%
+iter 310: loss 5.4126, time 956.60ms, mfu 35.00%
+iter 320: loss 5.2567, time 1029.01ms, mfu 34.78%
+iter 330: loss 5.2719, time 988.83ms, mfu 34.70%
+iter 340: loss 5.2584, time 952.66ms, mfu 34.77%
+iter 350: loss 5.0632, time 958.10ms, mfu 34.80%
+iter 360: loss 5.2443, time 958.49ms, mfu 34.84%
+iter 370: loss 5.2892, time 955.63ms, mfu 34.88%
+iter 380: loss 5.0698, time 957.64ms, mfu 34.90%
+iter 390: loss 5.1025, time 957.54ms, mfu 34.93%
+iter 400: loss 4.9623, time 959.74ms, mfu 34.94%
+iter 410: loss 5.0078, time 956.41ms, mfu 34.97%
+iter 420: loss 4.8448, time 956.85ms, mfu 34.99%
+iter 430: loss 4.9773, time 956.56ms, mfu 35.01%
+iter 440: loss 4.8007, time 965.26ms, mfu 35.00%
+iter 450: loss 5.0114, time 967.08ms, mfu 34.98%
+iter 460: loss 4.8238, time 963.10ms, mfu 34.98%
+iter 470: loss 4.9141, time 961.47ms, mfu 34.98%
+iter 480: loss 5.0062, time 965.83ms, mfu 34.97%
+iter 490: loss 4.7595, time 1123.65ms, mfu 34.47%
+step 500: train loss 4.8854, val loss 4.8904
+step 500: bw input_rms 2.5467 (max 3.3556), output_scale 0.4639, resid_mean_sd 0.2694, running_mean_err 0.3303, token_norm_cv in 0.135 out 0.102
+step 500: cond mlp_in 2.446e+04 [1.67e+04, 2.41e+05, 1.17e+05, 2e+04, 1.08e+04, 8.03e+03, 3.72e+04, 2.48e+04, 1.83e+04, 1.49e+04, 1.42e+04, 1.58e+04]
+step 500: cond attn_in 5.511e+04 [713, 4.76e+05, 2.49e+06, 6.79e+05, 1.24e+05, 8.45e+04, 5.92e+04, 2.91e+04, 2.05e+04, 1.58e+04, 1.46e+04, 1.6e+04]
+step 500: cond resid 1.042e+05 [7.1e+05, 5.07e+06, 1.79e+06, 2.39e+05, 1.2e+05, 8.04e+04, 4.01e+04, 2.67e+04, 1.99e+04, 1.69e+04, 1.65e+04, 1.87e+04]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 500: loss 4.8148, time 12916.86ms, mfu 31.28%
+iter 510: loss 4.6202, time 963.48ms, mfu 31.65%
+iter 520: loss 4.7202, time 953.95ms, mfu 32.01%
+iter 530: loss 4.8248, time 956.60ms, mfu 32.33%
+iter 540: loss 4.5265, time 956.72ms, mfu 32.62%
+iter 550: loss 4.6672, time 959.07ms, mfu 32.87%
+iter 560: loss 4.3974, time 966.51ms, mfu 33.06%
+iter 570: loss 4.6515, time 958.32ms, mfu 33.27%
+iter 580: loss 4.7261, time 959.65ms, mfu 33.45%
+iter 590: loss 4.5496, time 961.26ms, mfu 33.61%
+iter 600: loss 4.7144, time 954.91ms, mfu 33.77%
+iter 610: loss 4.5536, time 958.71ms, mfu 33.91%
+iter 620: loss 4.5390, time 962.88ms, mfu 34.01%
+iter 630: loss 4.5595, time 962.04ms, mfu 34.11%
+iter 640: loss 4.3377, time 970.40ms, mfu 34.17%
+iter 650: loss 4.5344, time 962.31ms, mfu 34.25%
+iter 660: loss 4.3575, time 963.83ms, mfu 34.32%
+iter 670: loss 4.2335, time 958.52ms, mfu 34.40%
+iter 680: loss 4.4193, time 954.60ms, mfu 34.49%
+iter 690: loss 4.3101, time 957.85ms, mfu 34.55%
+iter 700: loss 4.2151, time 963.93ms, mfu 34.59%
+iter 710: loss 4.3755, time 967.97ms, mfu 34.61%
+iter 720: loss 4.3988, time 962.97ms, mfu 34.64%
+iter 730: loss 4.3294, time 964.76ms, mfu 34.67%
+iter 740: loss 4.4157, time 957.40ms, mfu 34.72%
+iter 750: loss 4.4218, time 978.11ms, mfu 34.69%
+iter 760: loss 4.4610, time 956.74ms, mfu 34.74%
+iter 770: loss 4.4917, time 965.31ms, mfu 34.75%
+iter 780: loss 4.3657, time 960.65ms, mfu 34.78%
+iter 790: loss 4.3708, time 964.80ms, mfu 34.79%
+iter 800: loss 4.3906, time 959.68ms, mfu 34.82%
+iter 810: loss 4.4959, time 954.35ms, mfu 34.87%
+iter 820: loss 4.2632, time 955.00ms, mfu 34.91%
+iter 830: loss 4.3033, time 954.73ms, mfu 34.94%
+iter 840: loss 4.2125, time 959.80ms, mfu 34.96%
+iter 850: loss 4.2712, time 955.03ms, mfu 34.99%
+iter 860: loss 4.2998, time 950.75ms, mfu 35.03%
+iter 870: loss 4.2248, time 958.06ms, mfu 35.04%
+iter 880: loss 4.1950, time 967.89ms, mfu 35.01%
+iter 890: loss 4.2511, time 980.87ms, mfu 34.95%
+iter 900: loss 4.3886, time 955.64ms, mfu 34.97%
+iter 910: loss 4.1165, time 961.10ms, mfu 34.98%
+iter 920: loss 4.2116, time 963.44ms, mfu 34.98%
+iter 930: loss 4.1298, time 972.59ms, mfu 34.94%
+iter 940: loss 4.2646, time 968.48ms, mfu 34.92%
+iter 950: loss 4.1267, time 959.55ms, mfu 34.94%
+iter 960: loss 4.2344, time 958.92ms, mfu 34.96%
+iter 970: loss 4.1267, time 955.41ms, mfu 34.98%
+iter 980: loss 4.1474, time 972.22ms, mfu 34.95%
+iter 990: loss 4.1987, time 958.27ms, mfu 34.97%
+step 1000: train loss 4.2111, val loss 4.2108
+step 1000: bw input_rms 4.0533 (max 5.0903), output_scale 0.5085, resid_mean_sd 0.2979, running_mean_err 0.1512, token_norm_cv in 0.096 out 0.138
+step 1000: cond mlp_in 1.431e+04 [1.84e+04, 7.58e+05, 2.8e+05, 3.18e+04, 1.51e+04, 5.65e+03, 6.36e+03, 3.94e+03, 3.34e+03, 3.4e+03, 4.14e+03, 5.88e+03]
+step 1000: cond attn_in 2.39e+04 [945, 7.66e+05, 2.93e+06, 5.06e+05, 5.42e+04, 2.7e+04, 1.75e+04, 5.07e+03, 3.34e+03, 3.2e+03, 3.98e+03, 5.86e+03]
+step 1000: cond resid 4.805e+04 [9.6e+05, 4.77e+06, 1.65e+06, 1.31e+05, 4.87e+04, 2.52e+04, 1.21e+04, 8.33e+03, 6.24e+03, 5.04e+03, 5.33e+03, 7.43e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 1000: loss 4.2020, time 14380.50ms, mfu 31.70%
+iter 1010: loss 4.1935, time 949.28ms, mfu 32.08%
+iter 1020: loss 4.0923, time 957.37ms, mfu 32.39%
+iter 1030: loss 4.2253, time 960.59ms, mfu 32.66%
+iter 1040: loss 4.1940, time 956.26ms, mfu 32.91%
+iter 1050: loss 4.1017, time 956.94ms, mfu 33.14%
+iter 1060: loss 4.2083, time 956.12ms, mfu 33.35%
+iter 1070: loss 3.5856, time 956.40ms, mfu 33.53%
+iter 1080: loss 4.1023, time 957.43ms, mfu 33.69%
+iter 1090: loss 4.0338, time 953.91ms, mfu 33.85%
+iter 1100: loss 4.2290, time 973.49ms, mfu 33.93%
+iter 1110: loss 4.3112, time 966.57ms, mfu 34.02%
+iter 1120: loss 4.1560, time 957.22ms, mfu 34.13%
+iter 1130: loss 3.9988, time 966.48ms, mfu 34.20%
+iter 1140: loss 4.2954, time 953.85ms, mfu 34.31%
+iter 1150: loss 4.1001, time 957.07ms, mfu 34.40%
+iter 1160: loss 4.0444, time 956.74ms, mfu 34.48%
+iter 1170: loss 3.8509, time 963.64ms, mfu 34.52%
+iter 1180: loss 4.1221, time 959.86ms, mfu 34.58%
+iter 1190: loss 4.2093, time 956.23ms, mfu 34.64%
+iter 1200: loss 4.1750, time 959.66ms, mfu 34.69%
+iter 1210: loss 3.9395, time 954.93ms, mfu 34.74%
+iter 1220: loss 3.9130, time 970.41ms, mfu 34.74%
+iter 1230: loss 3.9914, time 958.72ms, mfu 34.78%
+iter 1240: loss 3.8172, time 972.64ms, mfu 34.76%
+iter 1250: loss 4.0034, time 957.43ms, mfu 34.80%
+iter 1260: loss 4.0339, time 978.53ms, mfu 34.76%
+iter 1270: loss 4.2186, time 960.69ms, mfu 34.79%
+iter 1280: loss 3.8048, time 970.25ms, mfu 34.78%
+iter 1290: loss 4.0749, time 958.82ms, mfu 34.81%
+iter 1300: loss 4.0302, time 954.20ms, mfu 34.86%
+iter 1310: loss 4.0467, time 956.59ms, mfu 34.89%
+iter 1320: loss 3.9837, time 960.64ms, mfu 34.91%
+iter 1330: loss 3.9177, time 967.40ms, mfu 34.90%
+iter 1340: loss 4.0193, time 982.87ms, mfu 34.83%
+iter 1350: loss 3.9863, time 957.70ms, mfu 34.87%
+iter 1360: loss 3.9261, time 973.18ms, mfu 34.84%
+iter 1370: loss 4.0329, time 952.94ms, mfu 34.89%
+iter 1380: loss 4.0268, time 970.01ms, mfu 34.87%
+iter 1390: loss 3.8523, time 966.38ms, mfu 34.87%
+iter 1400: loss 3.8519, time 961.16ms, mfu 34.88%
+iter 1410: loss 3.9171, time 957.53ms, mfu 34.91%
+iter 1420: loss 3.6311, time 952.12ms, mfu 34.96%
+iter 1430: loss 4.0729, time 954.72ms, mfu 34.99%
+iter 1440: loss 3.9294, time 954.15ms, mfu 35.02%
+iter 1450: loss 3.9867, time 967.77ms, mfu 34.99%
+iter 1460: loss 4.1219, time 961.60ms, mfu 35.00%
+iter 1470: loss 3.9495, time 967.67ms, mfu 34.98%
+iter 1480: loss 3.7998, time 954.32ms, mfu 35.01%
+iter 1490: loss 3.9651, time 958.02ms, mfu 35.02%
+step 1500: train loss 3.9325, val loss 3.9500
+step 1500: bw input_rms 4.8092 (max 5.8902), output_scale 0.5460, resid_mean_sd 0.2982, running_mean_err 0.0937, token_norm_cv in 0.085 out 0.152
+step 1500: cond mlp_in 8534 [1.58e+04, 6.34e+05, 1.66e+05, 2.31e+04, 2.19e+04, 5.64e+03, 3.14e+03, 1.62e+03, 1.3e+03, 1.24e+03, 1.49e+03, 2.56e+03]
+step 1500: cond attn_in 1.477e+04 [1.26e+03, 5.93e+05, 2.29e+06, 3.98e+05, 4.19e+04, 1.89e+04, 1.23e+04, 2.54e+03, 1.45e+03, 1.19e+03, 1.48e+03, 2.51e+03]
+step 1500: cond resid 2.766e+04 [7.48e+05, 3.25e+06, 1.15e+06, 1.01e+05, 3.49e+04, 1.69e+04, 5.88e+03, 3.89e+03, 2.79e+03, 2.24e+03, 2.34e+03, 3.59e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 1500: loss 3.9429, time 16252.05ms, mfu 31.72%
+iter 1510: loss 3.9472, time 977.74ms, mfu 32.00%
+iter 1520: loss 3.8851, time 970.02ms, mfu 32.27%
+iter 1530: loss 3.9133, time 960.01ms, mfu 32.55%
+iter 1540: loss 3.9054, time 970.42ms, mfu 32.76%
+iter 1550: loss 3.8952, time 953.71ms, mfu 33.02%
+iter 1560: loss 3.9775, time 964.94ms, mfu 33.20%
+iter 1570: loss 4.0228, time 966.98ms, mfu 33.36%
+iter 1580: loss 3.7341, time 969.94ms, mfu 33.50%
+iter 1590: loss 4.1056, time 960.17ms, mfu 33.66%
+iter 1600: loss 3.8169, time 959.87ms, mfu 33.80%
+iter 1610: loss 4.0030, time 963.05ms, mfu 33.91%
+iter 1620: loss 3.8177, time 962.85ms, mfu 34.02%
+iter 1630: loss 3.8745, time 957.88ms, mfu 34.13%
+iter 1640: loss 3.7941, time 961.98ms, mfu 34.22%
+iter 1650: loss 3.9399, time 960.57ms, mfu 34.30%
+iter 1660: loss 4.0141, time 954.74ms, mfu 34.40%
+iter 1670: loss 3.8682, time 956.95ms, mfu 34.48%
+iter 1680: loss 4.0117, time 961.76ms, mfu 34.53%
+iter 1690: loss 3.8674, time 974.33ms, mfu 34.53%
+iter 1700: loss 4.0378, time 954.46ms, mfu 34.61%
+iter 1710: loss 3.8527, time 956.30ms, mfu 34.67%
+iter 1720: loss 3.8988, time 959.37ms, mfu 34.71%
+iter 1730: loss 3.8909, time 981.73ms, mfu 34.67%
+iter 1740: loss 3.9521, time 968.90ms, mfu 34.68%
+iter 1750: loss 3.7362, time 952.31ms, mfu 34.74%
+iter 1760: loss 3.9369, time 961.09ms, mfu 34.77%
+iter 1770: loss 3.8415, time 960.32ms, mfu 34.80%
+iter 1780: loss 3.9165, time 957.64ms, mfu 34.84%
+iter 1790: loss 3.7342, time 949.60ms, mfu 34.90%
+iter 1800: loss 3.9741, time 954.56ms, mfu 34.94%
+iter 1810: loss 3.7471, time 962.57ms, mfu 34.94%
+iter 1820: loss 3.6370, time 983.35ms, mfu 34.87%
+iter 1830: loss 3.9307, time 956.28ms, mfu 34.90%
+iter 1840: loss 3.6682, time 958.43ms, mfu 34.93%
+iter 1850: loss 3.8614, time 963.95ms, mfu 34.93%
+iter 1860: loss 3.9386, time 956.19ms, mfu 34.95%
+iter 1870: loss 3.8310, time 957.04ms, mfu 34.98%
+iter 1880: loss 3.7937, time 963.50ms, mfu 34.97%
+iter 1890: loss 3.5552, time 954.54ms, mfu 35.00%
+iter 1900: loss 3.8720, time 972.44ms, mfu 34.96%
+iter 1910: loss 3.6666, time 956.13ms, mfu 34.99%
+iter 1920: loss 3.8296, time 958.26ms, mfu 35.00%
+iter 1930: loss 3.8631, time 955.69ms, mfu 35.03%
+iter 1940: loss 3.7510, time 957.01ms, mfu 35.04%
+iter 1950: loss 3.8184, time 955.98ms, mfu 35.06%
+iter 1960: loss 3.7990, time 953.62ms, mfu 35.08%
+iter 1970: loss 3.7463, time 965.81ms, mfu 35.06%
+iter 1980: loss 3.8168, time 957.55ms, mfu 35.07%
+iter 1990: loss 3.7927, time 965.07ms, mfu 35.05%
+step 2000: train loss 3.8113, val loss 3.8167
+step 2000: bw input_rms 5.1750 (max 6.2081), output_scale 0.5824, resid_mean_sd 0.3021, running_mean_err 0.0755, token_norm_cv in 0.080 out 0.163
+step 2000: cond mlp_in 9652 [1.35e+04, 7.4e+05, 2.13e+05, 2.82e+04, 4.86e+04, 1.16e+04, 3.55e+03, 1.54e+03, 1.14e+03, 1.19e+03, 1.33e+03, 1.97e+03]
+step 2000: cond attn_in 1.349e+04 [1.97e+03, 5.18e+05, 1.94e+06, 3.49e+05, 3.8e+04, 1.69e+04, 1.05e+04, 2.36e+03, 1.4e+03, 1.1e+03, 1.21e+03, 1.77e+03]
+step 2000: cond resid 2.103e+04 [7.13e+05, 2.42e+06, 8.62e+05, 8.41e+04, 2.85e+04, 1.34e+04, 4.15e+03, 2.64e+03, 1.81e+03, 1.48e+03, 1.91e+03, 2.79e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 2000: loss 3.8930, time 17917.29ms, mfu 31.74%
+iter 2010: loss 3.7385, time 948.60ms, mfu 32.11%
+iter 2020: loss 3.7696, time 960.33ms, mfu 32.41%
+iter 2030: loss 3.8884, time 947.55ms, mfu 32.72%
+iter 2040: loss 3.8274, time 949.95ms, mfu 32.99%
+iter 2050: loss 3.6611, time 962.43ms, mfu 33.19%
+iter 2060: loss 3.8395, time 957.34ms, mfu 33.39%
+iter 2070: loss 3.7748, time 954.19ms, mfu 33.58%
+iter 2080: loss 3.9063, time 955.60ms, mfu 33.74%
+iter 2090: loss 3.6128, time 957.22ms, mfu 33.89%
+iter 2100: loss 3.8187, time 965.69ms, mfu 33.98%
+iter 2110: loss 3.7432, time 956.77ms, mfu 34.10%
+iter 2120: loss 3.8013, time 963.35ms, mfu 34.19%
+iter 2130: loss 3.7221, time 965.98ms, mfu 34.25%
+iter 2140: loss 3.6866, time 950.76ms, mfu 34.37%
+iter 2150: loss 3.7498, time 955.09ms, mfu 34.46%
+iter 2160: loss 3.7889, time 957.49ms, mfu 34.53%
+iter 2170: loss 3.7329, time 965.33ms, mfu 34.56%
+iter 2180: loss 4.0662, time 969.61ms, mfu 34.58%
+iter 2190: loss 3.9642, time 966.52ms, mfu 34.60%
+iter 2200: loss 3.7327, time 973.77ms, mfu 34.60%
+iter 2210: loss 3.5182, time 970.39ms, mfu 34.61%
+iter 2220: loss 3.7124, time 959.03ms, mfu 34.66%
+iter 2230: loss 3.4725, time 955.29ms, mfu 34.72%
+iter 2240: loss 3.4909, time 963.21ms, mfu 34.74%
+iter 2250: loss 3.7606, time 974.65ms, mfu 34.72%
+iter 2260: loss 3.8233, time 959.05ms, mfu 34.76%
+iter 2270: loss 3.7702, time 957.11ms, mfu 34.80%
+iter 2280: loss 3.9359, time 954.62ms, mfu 34.85%
+iter 2290: loss 3.7745, time 957.74ms, mfu 34.88%
+iter 2300: loss 3.7752, time 955.34ms, mfu 34.92%
+iter 2310: loss 3.8125, time 955.55ms, mfu 34.95%
+iter 2320: loss 3.5010, time 972.33ms, mfu 34.91%
+iter 2330: loss 3.5653, time 959.06ms, mfu 34.93%
+iter 2340: loss 3.7392, time 955.88ms, mfu 34.96%
+iter 2350: loss 3.6928, time 960.29ms, mfu 34.97%
+iter 2360: loss 3.7470, time 960.92ms, mfu 34.98%
+iter 2370: loss 3.7320, time 970.16ms, mfu 34.95%
+iter 2380: loss 3.7966, time 957.00ms, mfu 34.97%
+iter 2390: loss 3.7068, time 948.18ms, mfu 35.03%
+iter 2400: loss 3.6138, time 955.27ms, mfu 35.05%
+iter 2410: loss 3.5329, time 959.75ms, mfu 35.05%
+iter 2420: loss 3.4527, time 954.85ms, mfu 35.07%
+iter 2430: loss 3.6415, time 955.90ms, mfu 35.09%
+iter 2440: loss 3.5934, time 956.18ms, mfu 35.10%
+iter 2450: loss 3.7999, time 954.13ms, mfu 35.12%
+iter 2460: loss 3.6324, time 957.70ms, mfu 35.12%
+iter 2470: loss 3.6675, time 956.75ms, mfu 35.13%
+iter 2480: loss 3.5618, time 954.77ms, mfu 35.14%
+iter 2490: loss 3.5028, time 966.96ms, mfu 35.11%
+step 2500: train loss 3.6913, val loss 3.7090
+step 2500: bw input_rms 5.1997 (max 6.2401), output_scale 0.5905, resid_mean_sd 0.2983, running_mean_err 0.0600, token_norm_cv in 0.082 out 0.167
+step 2500: cond mlp_in 9982 [1.73e+04, 7.9e+05, 3.3e+05, 2.4e+04, 5.12e+04, 9.93e+03, 5.47e+03, 2.04e+03, 1.3e+03, 1.05e+03, 790, 1.48e+03]
+step 2500: cond attn_in 1.345e+04 [3.71e+03, 5.52e+05, 1.87e+06, 3.44e+05, 3.93e+04, 1.8e+04, 1.04e+04, 2.23e+03, 1.31e+03, 1.01e+03, 970, 1.26e+03]
+step 2500: cond resid 1.929e+04 [8.48e+05, 2.26e+06, 7.66e+05, 8.65e+04, 2.78e+04, 1.31e+04, 3.52e+03, 2.21e+03, 1.65e+03, 1.41e+03, 1.44e+03, 2.19e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 2500: loss 3.7227, time 11890.42ms, mfu 31.88%
+iter 2510: loss 3.8197, time 954.99ms, mfu 32.22%
+iter 2520: loss 3.6650, time 953.24ms, mfu 32.53%
+iter 2530: loss 3.7491, time 957.55ms, mfu 32.79%
+iter 2540: loss 3.7717, time 964.91ms, mfu 33.00%
+iter 2550: loss 3.7031, time 956.57ms, mfu 33.22%
+iter 2560: loss 3.7764, time 963.51ms, mfu 33.39%
+iter 2570: loss 3.5329, time 946.66ms, mfu 33.61%
+iter 2580: loss 3.7101, time 958.30ms, mfu 33.76%
+iter 2590: loss 3.7093, time 958.45ms, mfu 33.90%
+iter 2600: loss 3.7692, time 954.41ms, mfu 34.04%
+iter 2610: loss 3.7007, time 966.30ms, mfu 34.12%
+iter 2620: loss 3.8000, time 956.91ms, mfu 34.22%
+iter 2630: loss 3.8594, time 966.74ms, mfu 34.28%
+iter 2640: loss 3.7768, time 954.03ms, mfu 34.38%
+iter 2650: loss 3.7155, time 957.15ms, mfu 34.46%
+iter 2660: loss 3.7982, time 953.48ms, mfu 34.55%
+iter 2670: loss 3.8541, time 954.88ms, mfu 34.62%
+iter 2680: loss 3.6996, time 957.83ms, mfu 34.67%
+iter 2690: loss 3.6189, time 965.16ms, mfu 34.69%
+iter 2700: loss 3.5157, time 953.26ms, mfu 34.76%
+iter 2710: loss 3.6547, time 951.58ms, mfu 34.82%
+iter 2720: loss 3.5816, time 954.15ms, mfu 34.86%
+iter 2730: loss 3.7765, time 958.01ms, mfu 34.89%
+iter 2740: loss 3.4655, time 958.83ms, mfu 34.91%
+iter 2750: loss 3.5743, time 956.55ms, mfu 34.94%
+iter 2760: loss 3.8351, time 954.04ms, mfu 34.98%
+iter 2770: loss 3.8305, time 965.87ms, mfu 34.97%
+iter 2780: loss 3.7416, time 956.25ms, mfu 34.99%
+iter 2790: loss 3.5391, time 958.93ms, mfu 35.00%
+iter 2800: loss 3.7565, time 954.52ms, mfu 35.03%
+iter 2810: loss 3.5559, time 953.50ms, mfu 35.06%
+iter 2820: loss 3.5532, time 955.95ms, mfu 35.07%
+iter 2830: loss 3.4994, time 954.27ms, mfu 35.09%
+iter 2840: loss 3.6072, time 953.93ms, mfu 35.11%
+iter 2850: loss 3.3663, time 966.14ms, mfu 35.09%
+iter 2860: loss 3.3155, time 950.87ms, mfu 35.12%
+iter 2870: loss 3.4501, time 962.54ms, mfu 35.10%
+iter 2880: loss 3.7114, time 962.76ms, mfu 35.09%
+iter 2890: loss 3.5459, time 957.46ms, mfu 35.10%
+iter 2900: loss 3.4869, time 956.24ms, mfu 35.11%
+iter 2910: loss 3.5951, time 957.48ms, mfu 35.11%
+iter 2920: loss 3.5789, time 956.22ms, mfu 35.12%
+iter 2930: loss 3.7656, time 961.48ms, mfu 35.11%
+iter 2940: loss 3.6272, time 958.36ms, mfu 35.12%
+iter 2950: loss 3.5526, time 957.73ms, mfu 35.12%
+iter 2960: loss 3.4618, time 965.80ms, mfu 35.09%
+iter 2970: loss 3.7770, time 962.12ms, mfu 35.08%
+iter 2980: loss 3.6621, time 955.72ms, mfu 35.10%
+iter 2990: loss 3.5617, time 955.98ms, mfu 35.11%
+step 3000: train loss 3.6316, val loss 3.6091
+step 3000: bw input_rms 4.9532 (max 5.9277), output_scale 0.6012, resid_mean_sd 0.2984, running_mean_err 0.0528, token_norm_cv in 0.079 out 0.175
+step 3000: cond mlp_in 9512 [1.96e+04, 8.08e+05, 4.31e+05, 2.15e+04, 6.55e+04, 9.35e+03, 6.35e+03, 1.72e+03, 980, 824, 611, 1.14e+03]
+step 3000: cond attn_in 1.18e+04 [6.29e+03, 4.26e+05, 1.43e+06, 2.9e+05, 3.65e+04, 1.59e+04, 9.13e+03, 1.97e+03, 1.09e+03, 841, 786, 877]
+step 3000: cond resid 1.547e+04 [8.02e+05, 1.66e+06, 5.62e+05, 7.75e+04, 2.48e+04, 1.13e+04, 3.28e+03, 1.8e+03, 1.27e+03, 950, 1.02e+03, 1.6e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 3000: loss 3.4764, time 12155.10ms, mfu 31.88%
+iter 3010: loss 3.4543, time 960.87ms, mfu 32.19%
+iter 3020: loss 3.4810, time 973.95ms, mfu 32.43%
+iter 3030: loss 3.7100, time 964.44ms, mfu 32.68%
+iter 3040: loss 3.8976, time 955.84ms, mfu 32.93%
+iter 3050: loss 3.6739, time 954.76ms, mfu 33.16%
+iter 3060: loss 3.6470, time 958.19ms, mfu 33.36%
+iter 3070: loss 3.7479, time 969.90ms, mfu 33.50%
+iter 3080: loss 3.6898, time 954.14ms, mfu 33.68%
+iter 3090: loss 3.7425, time 957.82ms, mfu 33.82%
+iter 3100: loss 3.3725, time 956.26ms, mfu 33.96%
+iter 3110: loss 3.5662, time 947.70ms, mfu 34.12%
+iter 3120: loss 3.7279, time 953.51ms, mfu 34.24%
+iter 3130: loss 3.5397, time 958.42ms, mfu 34.33%
+iter 3140: loss 3.7167, time 952.30ms, mfu 34.43%
+iter 3150: loss 3.7158, time 952.31ms, mfu 34.52%
+iter 3160: loss 3.5498, time 955.58ms, mfu 34.59%
+iter 3170: loss 3.6838, time 962.06ms, mfu 34.63%
+iter 3180: loss 3.4956, time 955.87ms, mfu 34.69%
+iter 3190: loss 3.5055, time 961.97ms, mfu 34.72%
+iter 3200: loss 3.5768, time 954.56ms, mfu 34.78%
+iter 3210: loss 3.6104, time 954.96ms, mfu 34.82%
+iter 3220: loss 3.5943, time 957.48ms, mfu 34.86%
+iter 3230: loss 3.3879, time 950.85ms, mfu 34.91%
+iter 3240: loss 3.5674, time 974.89ms, mfu 34.88%
+iter 3250: loss 3.4583, time 948.05ms, mfu 34.94%
+iter 3260: loss 3.5073, time 956.64ms, mfu 34.96%
+iter 3270: loss 3.5214, time 954.90ms, mfu 34.99%
+iter 3280: loss 3.6436, time 955.22ms, mfu 35.02%
+iter 3290: loss 3.2223, time 955.38ms, mfu 35.04%
+iter 3300: loss 3.5448, time 952.47ms, mfu 35.07%
+iter 3310: loss 3.6880, time 955.94ms, mfu 35.09%
+iter 3320: loss 3.4162, time 963.42ms, mfu 35.07%
+iter 3330: loss 3.6421, time 958.25ms, mfu 35.08%
+iter 3340: loss 3.8357, time 955.14ms, mfu 35.10%
+iter 3350: loss 3.7301, time 975.65ms, mfu 35.04%
+iter 3360: loss 3.5626, time 957.61ms, mfu 35.05%
+iter 3370: loss 3.4288, time 956.84ms, mfu 35.06%
+iter 3380: loss 3.6614, time 965.42ms, mfu 35.04%
+iter 3390: loss 3.4564, time 959.27ms, mfu 35.05%
+iter 3400: loss 3.6396, time 957.50ms, mfu 35.06%
+iter 3410: loss 3.5899, time 959.70ms, mfu 35.06%
+iter 3420: loss 3.3907, time 959.62ms, mfu 35.06%
+iter 3430: loss 3.6390, time 962.75ms, mfu 35.06%
+iter 3440: loss 3.5062, time 959.47ms, mfu 35.06%
+iter 3450: loss 3.6123, time 962.48ms, mfu 35.05%
+iter 3460: loss 3.6173, time 967.66ms, mfu 35.02%
+iter 3470: loss 3.3734, time 963.06ms, mfu 35.02%
+iter 3480: loss 3.5162, time 959.70ms, mfu 35.02%
+iter 3490: loss 3.4804, time 953.98ms, mfu 35.05%
+step 3500: train loss 3.5584, val loss 3.5150
+step 3500: bw input_rms 4.6393 (max 5.5523), output_scale 0.5925, resid_mean_sd 0.2981, running_mean_err 0.0339, token_norm_cv in 0.084 out 0.178
+step 3500: cond mlp_in 1.031e+04 [2.24e+04, 8.14e+05, 5.79e+05, 2.31e+04, 7.63e+04, 9.39e+03, 7.97e+03, 1.75e+03, 1.07e+03, 875, 633, 1.01e+03]
+step 3500: cond attn_in 1.092e+04 [5.36e+03, 4.12e+05, 1.35e+06, 2.52e+05, 3.31e+04, 1.59e+04, 8.21e+03, 1.86e+03, 1.06e+03, 788, 748, 757]
+step 3500: cond resid 1.427e+04 [9.2e+05, 1.44e+06, 5.19e+05, 6.88e+04, 2.32e+04, 1.03e+04, 2.94e+03, 1.67e+03, 1.16e+03, 856, 907, 1.41e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 3500: loss 3.6906, time 14810.35ms, mfu 31.77%
+iter 3510: loss 3.6976, time 955.81ms, mfu 32.12%
+iter 3520: loss 3.5202, time 955.33ms, mfu 32.43%
+iter 3530: loss 3.5038, time 955.41ms, mfu 32.71%
+iter 3540: loss 3.6225, time 958.10ms, mfu 32.95%
+iter 3550: loss 3.5243, time 957.45ms, mfu 33.18%
+iter 3560: loss 3.4544, time 954.58ms, mfu 33.38%
+iter 3570: loss 3.4768, time 965.23ms, mfu 33.53%
+iter 3580: loss 3.5667, time 947.56ms, mfu 33.73%
+iter 3590: loss 3.3246, time 955.57ms, mfu 33.88%
+iter 3600: loss 3.3923, time 954.45ms, mfu 34.02%
+iter 3610: loss 3.5402, time 958.75ms, mfu 34.13%
+iter 3620: loss 3.5361, time 958.32ms, mfu 34.23%
+iter 3630: loss 3.4462, time 958.35ms, mfu 34.32%
+iter 3640: loss 3.6379, time 954.78ms, mfu 34.42%
+iter 3650: loss 3.6948, time 945.87ms, mfu 34.53%
+iter 3660: loss 3.4620, time 955.60ms, mfu 34.60%
+iter 3670: loss 3.4949, time 954.48ms, mfu 34.67%
+iter 3680: loss 3.6343, time 950.70ms, mfu 34.74%
+iter 3690: loss 3.5651, time 964.67ms, mfu 34.76%
+iter 3700: loss 3.6052, time 958.32ms, mfu 34.80%
+iter 3710: loss 3.3721, time 966.00ms, mfu 34.80%
+iter 3720: loss 3.6739, time 961.77ms, mfu 34.82%
+iter 3730: loss 3.5551, time 957.90ms, mfu 34.86%
+iter 3740: loss 3.4886, time 950.86ms, mfu 34.91%
+iter 3750: loss 3.4665, time 953.52ms, mfu 34.95%
+iter 3760: loss 3.4685, time 965.58ms, mfu 34.94%
+iter 3770: loss 3.5783, time 967.18ms, mfu 34.93%
+iter 3780: loss 3.4662, time 956.36ms, mfu 34.96%
+iter 3790: loss 3.5893, time 960.66ms, mfu 34.97%
+iter 3800: loss 3.4887, time 960.80ms, mfu 34.97%
+iter 3810: loss 3.5689, time 961.20ms, mfu 34.98%
+iter 3820: loss 3.4447, time 970.75ms, mfu 34.95%
+iter 3830: loss 3.5911, time 955.95ms, mfu 34.98%
+iter 3840: loss 3.3861, time 951.13ms, mfu 35.02%
+iter 3850: loss 3.6030, time 967.63ms, mfu 35.00%
+iter 3860: loss 3.5788, time 957.86ms, mfu 35.01%
+iter 3870: loss 3.3486, time 952.93ms, mfu 35.04%
+iter 3880: loss 3.5241, time 955.01ms, mfu 35.06%
+iter 3890: loss 3.6197, time 957.68ms, mfu 35.07%
+iter 3900: loss 3.5125, time 957.25ms, mfu 35.08%
+iter 3910: loss 3.2897, time 957.74ms, mfu 35.09%
+iter 3920: loss 3.3539, time 954.31ms, mfu 35.11%
+iter 3930: loss 3.5532, time 959.74ms, mfu 35.11%
+iter 3940: loss 3.3979, time 957.22ms, mfu 35.11%
+iter 3950: loss 3.3865, time 955.56ms, mfu 35.12%
+iter 3960: loss 3.7339, time 954.39ms, mfu 35.14%
+iter 3970: loss 3.6611, time 953.83ms, mfu 35.16%
+iter 3980: loss 3.6382, time 947.10ms, mfu 35.19%
+iter 3990: loss 3.3811, time 962.04ms, mfu 35.17%
+step 4000: train loss 3.4730, val loss 3.4814
+step 4000: bw input_rms 4.3661 (max 5.2239), output_scale 0.6111, resid_mean_sd 0.3066, running_mean_err 0.0520, token_norm_cv in 0.085 out 0.184
+step 4000: cond mlp_in 1.58e+04 [2.67e+04, 9.17e+05, 9.01e+05, 2.7e+04, 1.12e+05, 1.82e+04, 1.47e+04, 3.48e+03, 2.01e+03, 1.54e+03, 967, 1.31e+03]
+step 4000: cond attn_in 1.043e+04 [5.64e+03, 4.25e+05, 1.26e+06, 2.39e+05, 2.98e+04, 1.39e+04, 7.21e+03, 1.65e+03, 937, 719, 700, 989]
+step 4000: cond resid 1.497e+04 [1.02e+06, 1.34e+06, 4.49e+05, 6.43e+04, 2.23e+04, 9.44e+03, 2.76e+03, 1.6e+03, 1.29e+03, 1.2e+03, 1.26e+03, 1.76e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 4000: loss 3.6062, time 14927.20ms, mfu 31.88%
+iter 4010: loss 3.5056, time 960.03ms, mfu 32.20%
+iter 4020: loss 3.3573, time 955.37ms, mfu 32.51%
+iter 4030: loss 3.3726, time 959.55ms, mfu 32.76%
+iter 4040: loss 3.6241, time 954.44ms, mfu 33.01%
+iter 4050: loss 3.4214, time 959.45ms, mfu 33.22%
+iter 4060: loss 3.5813, time 981.32ms, mfu 33.33%
+iter 4070: loss 3.5013, time 959.03ms, mfu 33.51%
+iter 4080: loss 3.4854, time 963.35ms, mfu 33.65%
+iter 4090: loss 3.6003, time 956.32ms, mfu 33.81%
+iter 4100: loss 3.6163, time 963.07ms, mfu 33.92%
+iter 4110: loss 3.3303, time 956.42ms, mfu 34.05%
+iter 4120: loss 3.3334, time 969.64ms, mfu 34.12%
+iter 4130: loss 3.6358, time 958.96ms, mfu 34.22%
+iter 4140: loss 3.4832, time 957.61ms, mfu 34.31%
+iter 4150: loss 3.5855, time 961.78ms, mfu 34.38%
+iter 4160: loss 3.3546, time 976.39ms, mfu 34.39%
+iter 4170: loss 3.5542, time 958.44ms, mfu 34.46%
+iter 4180: loss 3.3439, time 963.04ms, mfu 34.51%
+iter 4190: loss 3.1756, time 961.63ms, mfu 34.56%
+iter 4200: loss 3.4668, time 970.82ms, mfu 34.57%
+iter 4210: loss 3.4096, time 958.11ms, mfu 34.63%
+iter 4220: loss 3.4121, time 982.40ms, mfu 34.60%
+iter 4230: loss 3.4765, time 957.00ms, mfu 34.65%
+iter 4240: loss 3.4093, time 961.74ms, mfu 34.69%
+iter 4250: loss 3.5233, time 954.13ms, mfu 34.75%
+iter 4260: loss 3.3217, time 955.76ms, mfu 34.80%
+iter 4270: loss 3.6171, time 955.16ms, mfu 34.84%
+iter 4280: loss 3.3817, time 956.08ms, mfu 34.88%
+iter 4290: loss 3.4409, time 964.53ms, mfu 34.88%
+iter 4300: loss 3.4606, time 959.67ms, mfu 34.90%
+iter 4310: loss 3.5589, time 955.92ms, mfu 34.93%
+iter 4320: loss 3.4117, time 955.71ms, mfu 34.96%
+iter 4330: loss 3.5555, time 962.99ms, mfu 34.96%
+iter 4340: loss 3.5368, time 963.26ms, mfu 34.96%
+iter 4350: loss 3.5313, time 967.28ms, mfu 34.95%
+iter 4360: loss 3.5552, time 959.47ms, mfu 34.96%
+iter 4370: loss 3.5181, time 960.00ms, mfu 34.97%
+iter 4380: loss 3.3556, time 959.13ms, mfu 34.98%
+iter 4390: loss 3.6247, time 957.65ms, mfu 35.00%
+iter 4400: loss 3.5190, time 960.48ms, mfu 35.01%
+iter 4410: loss 3.5098, time 954.23ms, mfu 35.03%
+iter 4420: loss 3.5201, time 956.80ms, mfu 35.05%
+iter 4430: loss 3.4776, time 952.79ms, mfu 35.08%
+iter 4440: loss 3.4876, time 963.39ms, mfu 35.07%
+iter 4450: loss 3.3173, time 962.30ms, mfu 35.06%
+iter 4460: loss 3.4277, time 956.51ms, mfu 35.07%
+iter 4470: loss 3.5011, time 966.37ms, mfu 35.05%
+iter 4480: loss 3.4914, time 956.71ms, mfu 35.06%
+iter 4490: loss 3.4857, time 958.47ms, mfu 35.07%
+step 4500: train loss 3.4644, val loss 3.4862
+step 4500: bw input_rms 4.1597 (max 4.9891), output_scale 0.6103, resid_mean_sd 0.3011, running_mean_err 0.0387, token_norm_cv in 0.086 out 0.178
+step 4500: cond mlp_in 1.011e+04 [2.75e+04, 8.81e+05, 7.4e+05, 2.06e+04, 7.13e+04, 9.94e+03, 8.25e+03, 1.67e+03, 992, 783, 506, 806]
+step 4500: cond attn_in 9703 [5.33e+03, 4.17e+05, 1.24e+06, 2.42e+05, 2.89e+04, 1.34e+04, 6.88e+03, 1.59e+03, 903, 712, 668, 575]
+step 4500: cond resid 1.313e+04 [1.15e+06, 1.36e+06, 4.41e+05, 6.39e+04, 2.12e+04, 9.26e+03, 2.65e+03, 1.59e+03, 1.11e+03, 808, 719, 1.13e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 4500: loss 3.4904, time 14801.39ms, mfu 31.79%
+iter 4510: loss 3.5950, time 960.38ms, mfu 32.12%
+iter 4520: loss 3.4086, time 952.30ms, mfu 32.44%
+iter 4530: loss 3.6709, time 954.83ms, mfu 32.72%
+iter 4540: loss 3.5547, time 954.52ms, mfu 32.98%
+iter 4550: loss 3.2891, time 958.35ms, mfu 33.19%
+iter 4560: loss 3.5442, time 958.11ms, mfu 33.39%
+iter 4570: loss 3.6842, time 952.05ms, mfu 33.58%
+iter 4580: loss 3.5413, time 953.76ms, mfu 33.76%
+iter 4590: loss 3.3893, time 953.20ms, mfu 33.91%
+iter 4600: loss 3.5814, time 958.49ms, mfu 34.03%
+iter 4610: loss 3.4779, time 962.46ms, mfu 34.13%
+iter 4620: loss 3.5483, time 956.82ms, mfu 34.23%
+iter 4630: loss 3.6634, time 961.01ms, mfu 34.31%
+iter 4640: loss 3.5164, time 957.03ms, mfu 34.40%
+iter 4650: loss 3.5242, time 958.47ms, mfu 34.47%
+iter 4660: loss 3.7117, time 974.11ms, mfu 34.48%
+iter 4670: loss 3.3899, time 956.46ms, mfu 34.55%
+iter 4680: loss 3.4448, time 961.25ms, mfu 34.60%
+iter 4690: loss 3.4718, time 961.92ms, mfu 34.64%
+iter 4700: loss 3.2761, time 958.40ms, mfu 34.69%
+iter 4710: loss 3.4034, time 963.22ms, mfu 34.72%
+iter 4720: loss 3.5885, time 950.14ms, mfu 34.79%
+iter 4730: loss 3.3839, time 951.94ms, mfu 34.85%
+iter 4740: loss 3.4512, time 957.46ms, mfu 34.88%
+iter 4750: loss 3.5986, time 955.21ms, mfu 34.91%
+iter 4760: loss 3.4534, time 967.41ms, mfu 34.90%
+iter 4770: loss 3.3916, time 957.81ms, mfu 34.93%
+iter 4780: loss 3.4288, time 959.79ms, mfu 34.94%
+iter 4790: loss 3.5115, time 959.56ms, mfu 34.96%
+iter 4800: loss 3.5153, time 961.74ms, mfu 34.96%
+iter 4810: loss 3.1079, time 967.03ms, mfu 34.95%
+iter 4820: loss 3.4748, time 960.66ms, mfu 34.96%
+iter 4830: loss 3.5121, time 954.26ms, mfu 34.99%
+iter 4840: loss 3.4877, time 949.26ms, mfu 35.04%
+iter 4850: loss 3.3705, time 959.88ms, mfu 35.04%
+iter 4860: loss 3.3836, time 959.22ms, mfu 35.05%
+iter 4870: loss 3.5265, time 958.98ms, mfu 35.05%
+iter 4880: loss 3.3532, time 960.83ms, mfu 35.05%
+iter 4890: loss 3.5335, time 959.04ms, mfu 35.06%
+iter 4900: loss 3.4919, time 949.95ms, mfu 35.10%
+iter 4910: loss 3.3458, time 959.31ms, mfu 35.10%
+iter 4920: loss 3.4807, time 953.34ms, mfu 35.12%
+iter 4930: loss 3.4011, time 962.60ms, mfu 35.10%
+iter 4940: loss 3.3595, time 956.78ms, mfu 35.11%
+iter 4950: loss 3.5079, time 946.55ms, mfu 35.16%
+iter 4960: loss 3.3671, time 957.25ms, mfu 35.16%
+iter 4970: loss 3.5499, time 958.10ms, mfu 35.16%
+iter 4980: loss 3.4883, time 952.78ms, mfu 35.17%
+iter 4990: loss 3.6267, time 955.57ms, mfu 35.18%
+step 5000: train loss 3.4139, val loss 3.4463
+step 5000: bw input_rms 4.0195 (max 4.8329), output_scale 0.6043, resid_mean_sd 0.3011, running_mean_err 0.0312, token_norm_cv in 0.084 out 0.178
+step 5000: cond mlp_in 1.067e+04 [2.79e+04, 8.15e+05, 7.08e+05, 1.86e+04, 6.92e+04, 1.23e+04, 8.48e+03, 1.72e+03, 1.09e+03, 955, 611, 922]
+step 5000: cond attn_in 9259 [5.28e+03, 4.04e+05, 1.17e+06, 2.21e+05, 2.76e+04, 1.25e+04, 6.71e+03, 1.55e+03, 822, 646, 594, 631]
+step 5000: cond resid 1.282e+04 [1.2e+06, 1.32e+06, 4.22e+05, 6.24e+04, 2.1e+04, 8.93e+03, 2.58e+03, 1.51e+03, 1.04e+03, 730, 727, 1.17e+03]
+saving checkpoint to /home/hsivan/.cache/out-gpt2-1gpu-g2c-bw-lr1.2e-3
+iter 5000: loss 3.5092, time 15006.93ms, mfu 31.89%
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mgpt2-1gpu-cos5k-bw-mom0.3-ff0.4-l6-lr1.2e-3[0m at: [34m[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20261116_021203-5b9s3jas/logs[0m
+Job completed.

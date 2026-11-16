@@ -7,6 +7,7 @@ https://github.com/openai/gpt-2/blob/master/src/model.py
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
 """
 
+import contextlib
 import math
 import inspect
 from dataclasses import dataclass
@@ -95,6 +96,17 @@ def fix_cov(covmat, fix_factor=0.9):
         raise ValueError(f"Unsupported covmat.dim()={covmat.dim()}")
 
     return a * covmat
+
+
+def shrink_cov(covmat, fix_factor, target="diag"):
+    """fix_cov for target="diag"; "identity" shrinks toward (mean variance) * I
+    instead (Ledoit-Wolf), which also pulls the channel variances together."""
+    if target == "diag":
+        return fix_cov(covmat, fix_factor)
+    G = covmat.size(-1)
+    eye = torch.eye(G, device=covmat.device, dtype=covmat.dtype)
+    mean_var = covmat.diagonal(dim1=-2, dim2=-1).mean(-1)[..., None, None]
+    return fix_factor * covmat + (1 - fix_factor) * mean_var * eye
 
 
 def batch_center_only(
@@ -227,9 +239,51 @@ def boost_grad(t, scale):
     return scale * t - (scale - 1.0) * t.detach()
 
 
+class _RenormWhitenFn(torch.autograd.Function):
+    """Forward: Y_R = W_R (x - mu_R). Backward: the gradient of
+    Z = R L_B^-1 (x - mu_B) + d (R, d constant), written out by hand.
+
+    Same value and gradient as Y_R + (Z - Z.detach()) in _renorm_batch_whiten,
+    without its activation-sized forward product and elementwise passes; the
+    Cholesky and inverse backward run on the small (G, G) matrices.
+    """
+
+    @staticmethod
+    def forward(ctx, Xg, Xc, mu_R, W_R, L_B, W_B, cov_scale, fix_factor, shrink_target):
+        R = W_R @ L_B
+        ctx.save_for_backward(Xc, R, L_B, W_B)
+        ctx.cov_scale, ctx.fix_factor, ctx.shrink_target = cov_scale, fix_factor, shrink_target
+        return torch.einsum("gij,btgj->btgi", W_R[0], Xg - mu_R.unsqueeze(1))
+
+    @staticmethod
+    def backward(ctx, g):
+        Xc, R, L, W = ctx.saved_tensors
+        B, T, _, G = Xc.shape
+        M = R @ W
+        dXc = torch.einsum("btgi,gij->btgj", g, M[0])
+        dM = torch.einsum("btgi,btgj->gij", g, Xc).unsqueeze(0)
+        # M = R W, W = L^-1, L = chol(A): back to A (Murray 2016), then to cov.
+        dL = -W.transpose(-1, -2) @ (R.transpose(-1, -2) @ dM) @ W.transpose(-1, -2)
+        P = torch.tril(L.transpose(-1, -2) @ dL)
+        P = P - 0.5 * torch.diag_embed(P.diagonal(dim1=-2, dim2=-1))
+        dA = W.transpose(-1, -2) @ P @ W
+        dA = 0.5 * (dA + dA.transpose(-1, -2))
+        ff = ctx.fix_factor
+        diag = torch.diag_embed(dA.diagonal(dim1=-2, dim2=-1))
+        if ctx.shrink_target == "diag":
+            dA = ff * dA + (1 - ff) * diag
+        else:
+            eye = torch.eye(G, device=dA.device, dtype=dA.dtype)
+            dA = ff * dA + (1 - ff) * diag.sum((-2, -1), keepdim=True) / G * eye
+        dcov = ctx.cov_scale * dA
+        dXc = dXc + torch.einsum("btgc,gcd->btgd", Xc, (2.0 / (B * T)) * dcov[0])
+        return dXc - dXc.mean(dim=(0, 1), keepdim=True), None, None, None, None, None, None, None, None
+
+
 def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_factor,
                          cov_warmup, center_mode, stat_grad_scale, warmup_ema_buffer,
-                         update_running_stats, update_running_cov_stats):
+                         update_running_stats, update_running_cov_stats,
+                         stat_grad="full", cache=None, shrink_target="diag", fused=False):
     """renorm with whole-batch gradient statistics (renorm_stats="batch").
 
     The forward value is the whitening with the stored buffers, so the current
@@ -239,15 +293,27 @@ def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_facto
     triangular solves. calibrated takes the running_mean branch; its buffers
     hold the calibration statistics and are not updated here (the update flags
     are off outside calibration).
+
+    stat_grad: which current-batch statistics carry gradient. "full" (default)
+    the mean and covariance; "mean" the mean only; "none" neither, so the
+    layer backpropagates as the fixed linear map W_R (ablations).
+
+    cache: a per-layer dict holding the whitening matrix of the buffers, keyed
+    by the buffer's storage and version. When the buffer update below
+    reproduces cov_w bit for bit (running_mean and leave_one_out without
+    boost), next step's W_R is this step's W_B, so its Cholesky and inverse are
+    skipped.
     """
     B, T, n_groups, G = Xg.shape
     eye = torch.eye(G, device=Xg.device, dtype=Xg.dtype).view(1, 1, G, G)
     mu_R = running_mean.detach().clone()  # (1, ng, G)
     cov_R = running_cov.detach().clone()  # (1, ng, G, G)
 
-    mu_B = Xg.mean(dim=(0, 1)).unsqueeze(0)  # (1, ng, G)
-    Xc = Xg - mu_B.unsqueeze(1)
-    cov = torch.einsum("btgc,btgd->gcd", Xc, Xc).unsqueeze(0) / (B * T) + eps * eye
+    fused = fused and stat_grad == "full" and not cov_warmup
+    with torch.no_grad() if fused else contextlib.nullcontext():
+        mu_B = Xg.mean(dim=(0, 1)).unsqueeze(0)  # (1, ng, G)
+        Xc = Xg - (mu_B.detach() if stat_grad == "none" else mu_B).unsqueeze(1)
+        cov = torch.einsum("btgc,btgd->gcd", Xc, Xc).unsqueeze(0) / (B * T) + eps * eye
 
     if center_mode == "leave_one_out":
         cov_w = cov if stat_grad_scale == 1.0 else boost_grad(cov, stat_grad_scale)
@@ -255,20 +321,33 @@ def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_facto
         cov_w = (1 - momentum) * eye * cov + momentum * cov
     else:
         cov_w = boost_grad((1 - momentum) * cov_R + momentum * cov, stat_grad_scale)
+    if stat_grad != "full":
+        cov_w = cov_w.detach()
 
-    L_B = torch.linalg.cholesky(fix_cov(cov_w, fix_factor))
+    L_B = torch.linalg.cholesky(shrink_cov(cov_w, fix_factor, shrink_target))
     W_B = torch.linalg.solve_triangular(L_B, eye.expand_as(L_B), upper=False)
+    key = (running_cov.data_ptr(), running_cov._version)
     with torch.no_grad():
-        W_R = torch.linalg.solve_triangular(
-            torch.linalg.cholesky(fix_cov(cov_R, fix_factor)), eye.expand_as(cov_R), upper=False)
-        R = W_R @ L_B
-        d = torch.einsum("xgij,xgj->xgi", W_R, mu_B - mu_R)
-        Y_R = torch.einsum("gij,btgj->btgi", W_R[0], Xg - mu_R.unsqueeze(1))
-    M = R @ W_B  # value W_R, gradient through the batch statistics
-    Z = torch.einsum("gij,btgj->btgi", M[0], Xc) + d.unsqueeze(1)
-    Y = Y_R + (Z - Z.detach())
+        if cache is not None and cache.get("key") == key:
+            W_R = cache["W"]
+        else:
+            W_R = torch.linalg.solve_triangular(
+                torch.linalg.cholesky(shrink_cov(cov_R, fix_factor, shrink_target)),
+                eye.expand_as(cov_R), upper=False)
+    if fused:
+        cov_scale = stat_grad_scale * (1.0 if center_mode == "leave_one_out" else momentum)
+        Y = _RenormWhitenFn.apply(Xg, Xc, mu_R, W_R, L_B, W_B, cov_scale, fix_factor, shrink_target)
+    else:
+        with torch.no_grad():
+            R = W_R @ L_B
+            d = torch.einsum("xgij,xgj->xgi", W_R, mu_B - mu_R)
+            Y_R = torch.einsum("gij,btgj->btgi", W_R[0], Xg - mu_R.unsqueeze(1))
+        M = R @ W_B  # value W_R, gradient through the batch statistics
+        Z = torch.einsum("gij,btgj->btgi", M[0], Xc) + d.unsqueeze(1)
+        Y = Y_R + (Z - Z.detach())
 
     with torch.no_grad():
+        buffer_is_cov_w = stat_grad_scale == 1.0 and not cov_warmup
         if center_mode == "leave_one_out":
             running_mean.copy_(mu_B)
             running_cov.copy_(cov)
@@ -280,6 +359,15 @@ def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_facto
                     running_cov.copy_((1 - momentum) * eye * cov + momentum * cov)
                 else:
                     running_cov.mul_(1 - momentum).add_(momentum * cov)
+            buffer_is_cov_w = buffer_is_cov_w and update_running_cov_stats
+        if cache is not None:
+            new_key = (running_cov.data_ptr(), running_cov._version)
+            if buffer_is_cov_w:
+                cache.update(key=new_key, W=W_B.detach())
+            elif new_key == key:
+                cache.update(key=key, W=W_R)
+            else:
+                cache.clear()
     return Y.reshape(B, T, n_groups * G)
 
 
@@ -306,6 +394,10 @@ def batch_orthonorm(
     calib_center="loo",
     renorm=False,
     renorm_stats="loo",
+    stat_grad="full",
+    renorm_cache=None,
+    shrink_target="diag",
+    renorm_fused=False,
 ):
     """
     Fully vectorized block whitening for X of shape (B, T, C).
@@ -405,13 +497,20 @@ def batch_orthonorm(
     renorm = renorm and training and not full_mode
     if renorm_stats not in ("loo", "batch"):
         raise ValueError(f"Unknown renorm_stats: {renorm_stats}")
+    if stat_grad not in ("full", "mean", "none"):
+        raise ValueError(f"Unknown stat_grad: {stat_grad}")
+    if stat_grad != "full" and training and not (renorm and renorm_stats == "batch"):
+        raise ValueError("stat_grad other than 'full' needs renorm=True, renorm_stats='batch'")
+    if shrink_target not in ("diag", "identity"):
+        raise ValueError(f"Unknown shrink_target: {shrink_target}")
     if renorm and renorm_stats == "batch":
         if center_mode not in ("leave_one_out", "running_mean", "calibrated"):
             raise ValueError("renorm_stats='batch' supports leave_one_out, running_mean and calibrated")
         Y = _renorm_batch_whiten(
             X.view(B, T, n_groups, group_size), running_mean, running_cov, eps,
             momentum, fix_factor, cov_warmup, center_mode, stat_grad_scale,
-            warmup_ema_buffer, update_running_stats, update_running_cov_stats)
+            warmup_ema_buffer, update_running_stats, update_running_cov_stats,
+            stat_grad=stat_grad, cache=renorm_cache, shrink_target=shrink_target, fused=renorm_fused)
         if gamma is not None:
             Y = Y * gamma.view(1, 1, -1)
         if beta is not None and bias:
@@ -623,7 +722,7 @@ def batch_orthonorm(
         # Inference (and the 'full' oracle, handled via cov_full) use the buffer.
         cov_for_fix = running_cov
 
-    uncorrelated_running_cov = fix_cov(cov_full if full_mode else cov_for_fix, fix_factor)
+    uncorrelated_running_cov = shrink_cov(cov_full if full_mode else cov_for_fix, fix_factor, shrink_target)
 
     # --------------------------------------
     # 7. Cholesky whitening (batched)
@@ -640,7 +739,7 @@ def batch_orthonorm(
     Y_perm = torch.linalg.solve_triangular(L, Xc_perm, upper=False)
 
     if renorm:
-        L_R = torch.linalg.cholesky(fix_cov(prev_cov, fix_factor))
+        L_R = torch.linalg.cholesky(shrink_cov(prev_cov, fix_factor, shrink_target))
         L_R = L_R.expand(B, -1, -1, -1).contiguous()
         with torch.no_grad():
             R = torch.linalg.solve_triangular(L_R, L, upper=False)
@@ -745,8 +844,13 @@ class BatchWhiteningBlock(nn.Module):
     # fully connected layer and 4 for a convolutional layer
     def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean",group_size=None,
                  fix_factor=0.9, warmup_ema_buffer=False, inference_ema=False, grad_scale=None,
-                 calib_center="loo", renorm=False, renorm_stats="loo"):
+                 calib_center="loo", renorm=False, renorm_stats="loo", stat_grad="full",
+                 renorm_cache=True, shrink_target="diag", renorm_fused=False):
         super().__init__()
+        self.renorm_fused = renorm_fused
+        self.stat_grad = stat_grad
+        self.shrink_target = shrink_target
+        self.renorm_cache = {} if renorm_cache else None
         # The scale parameter and the shift parameter (model parameters) are
         # initialized to 1 and 0, respectively
         self.n_features=num_features
@@ -887,6 +991,10 @@ class BatchWhiteningBlock(nn.Module):
             calib_center=self.calib_center,
             renorm=self.renorm,
             renorm_stats=self.renorm_stats,
+            stat_grad=self.stat_grad,
+            renorm_cache=self.renorm_cache,
+            shrink_target=self.shrink_target,
+            renorm_fused=self.renorm_fused,
             training_mode=True if self.collect_calib_stats else None)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
@@ -906,6 +1014,17 @@ class LayerNorm(nn.Module):
 
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+
+
+class RMSNorm(nn.Module):
+    """Per-token scale normalization with a learned gain, without LayerNorm's centering."""
+
+    def __init__(self, ndim):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(ndim))
+
+    def forward(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-5) * self.weight
 
 class CausalSelfAttention(nn.Module):
 
@@ -997,6 +1116,10 @@ def _make_norm_layer(config, layer_norm_fallback=True):
             calib_center=config.bw_calib_center,
             renorm=config.bw_renorm,
             renorm_stats=config.bw_renorm_stats,
+            stat_grad=config.bw_stat_grad,
+            renorm_cache=config.bw_renorm_cache,
+            shrink_target=config.bw_shrink_target,
+            renorm_fused=config.bw_renorm_fused,
         )
     elif config.normalization_type == "center_only":
         return BatchCenterBlock(config.n_embd, center_mode=config.batch_center_mode)
@@ -1017,15 +1140,26 @@ class Block(nn.Module):
         norm = lambda: _make_norm_layer(config, layer_norm_fallback=False)
         self.bw_1 = norm() if in_block and config.bw_sites in ("attn", "both") else nn.Identity()
         self.bw_2 = norm() if in_block and config.bw_sites in ("mlp", "both") else nn.Identity()
-        keep_ln = lambda bw: config.bw_ln_after or isinstance(bw, nn.Identity)
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias) if keep_ln(self.bw_1) else nn.Identity()
+        post = config.bw_post_norm if config.bw_ln_after else "none"
+        C = config.n_embd
+
+        def pre(bw):  # normalization before BW
+            return LayerNorm(C, bias=config.bias) if post == "ln_before" and not isinstance(bw, nn.Identity) else nn.Identity()
+
+        def after(bw):  # normalization between BW (or nothing) and the sublayer
+            if isinstance(bw, nn.Identity) or post == "ln":
+                return LayerNorm(C, bias=config.bias)
+            return {"rms": lambda: RMSNorm(C), "ln_noaffine": lambda: nn.LayerNorm(C, elementwise_affine=False),
+                    "none": nn.Identity, "ln_before": nn.Identity}[post]()
+
+        self.pre_1, self.ln_1 = pre(self.bw_1), after(self.bw_1)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias) if keep_ln(self.bw_2) else nn.Identity()
+        self.pre_2, self.ln_2 = pre(self.bw_2), after(self.bw_2)
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(self.bw_1(x)))
-        x = x + self.mlp(self.ln_2(self.bw_2(x)))
+        x = x + self.attn(self.ln_1(self.bw_1(self.pre_1(x))))
+        x = x + self.mlp(self.ln_2(self.bw_2(self.pre_2(x))))
         return x
 
 class FirstBlock(nn.Module):
@@ -1100,6 +1234,17 @@ class GPTConfig:
     bw_sites: str = "mlp"
     # False drops the LayerNorm that follows each BW layer (BW feeds the linear layer directly).
     bw_ln_after: bool = True
+    # Normalization around each BW layer: "ln" (BW -> LayerNorm), "rms" (BW -> RMSNorm),
+    # "ln_noaffine" (BW -> LayerNorm without gain/bias), "none" (BW only), "ln_before" (LayerNorm -> BW).
+    bw_post_norm: str = "ln"
+    # renorm "batch" only: current-batch statistics with gradient, "full", "mean" or "none".
+    bw_stat_grad: str = "full"
+    # renorm "batch" only: reuse last step's whitening matrix when it equals the buffers' (exact).
+    bw_renorm_cache: bool = True
+    # renorm "batch" only: shrink the covariance toward its "diag" (fix_factor) or "identity".
+    bw_shrink_target: str = "diag"
+    # renorm "batch" only: hand-written backward (same value and gradient, faster).
+    bw_renorm_fused: bool = True
     # Deprecated compatibility field for older checkpoints/configs.
     batch_whitening: bool = None
 
@@ -1134,6 +1279,8 @@ class GPTConfig:
 
         if self.bw_sites not in ("mlp", "attn", "both"):
             raise ValueError(f"bw_sites must be 'mlp', 'attn' or 'both', got {self.bw_sites!r}")
+        if self.bw_post_norm not in ("ln", "rms", "ln_noaffine", "none", "ln_before"):
+            raise ValueError(f"Unknown bw_post_norm: {self.bw_post_norm!r}")
 
         # "full" is a verification-only oracle (whole-batch, breaks causality).
         valid_center_modes = {"leave_one_out", "running_mean", "calibrated", "full"}
