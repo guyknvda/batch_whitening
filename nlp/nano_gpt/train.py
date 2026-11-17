@@ -91,11 +91,17 @@ bw_layers = 0  # BW only in the first bw_layers blocks; 0 -> all
 bw_where = ""  # comma-separated block indices with BW, e.g. "0,1"; overrides bw_layers
 bw_sites = "mlp"  # BW on the "mlp" input, the "attn" input, or "both"
 bw_ln_after = True  # False drops the LayerNorm after each BW layer
-bw_post_norm = "ln"  # around BW: "ln", "rms", "ln_noaffine", "none" (after BW) or "ln_before" (LN -> BW)
+bw_post_norm = "ln_noaffine"  # around BW: "ln", "rms", "ln_noaffine", "none" (after BW) or "ln_before" (LN -> BW)
+bw_fuse_post_norm = True  # with "ln_noaffine": fold that LayerNorm into BW
 bw_stat_grad = "full"  # renorm batch: statistics with gradient, "full", "mean" or "none" (ablation)
 bw_renorm_cache = True  # renorm batch: reuse last step's whitening matrix when exact
 bw_shrink_target = "diag"  # renorm batch: shrink the covariance toward "diag" or "identity"
 bw_renorm_fused = True  # renorm batch: hand-written backward (same value and gradient, faster)
+bw_whiten = "ns_chol"  # renorm batch: "ns_chol" (NS forward, Cholesky backward), "cholesky", "ns" (Newton-Schulz ZCA) or "ns_warm" (warm-started); ns_chol is cholesky without renorm batch
+bw_ns_iters = 10
+bw_fast = True  # renorm batch, one group: fewer passes over the activations (same math)
+bw_side_stream = True  # bw_fast: whitening-matrix math on a side CUDA stream
+bw_ns_refresh = 0  # ns_warm: cold Newton-Schulz restart every this many steps (0: never)
 log_conditioning = True  # log covariance condition numbers of the sublayer inputs at each eval
 abort_ref_log = ""  # stop early if eval train loss exceeds abort_ratio x this log's loss at the same step
 abort_ratio = 1.3
@@ -342,9 +348,9 @@ model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=bloc
                   bw_renorm=bw_renorm,
                   bw_renorm_stats=bw_renorm_stats,
                   bw_layers=bw_layers, bw_where=bw_where, bw_sites=bw_sites,
-                  bw_ln_after=bw_ln_after, bw_post_norm=bw_post_norm, bw_stat_grad=bw_stat_grad,
+                  bw_ln_after=bw_ln_after, bw_post_norm=bw_post_norm, bw_fuse_post_norm=bw_fuse_post_norm, bw_stat_grad=bw_stat_grad,
                   bw_renorm_cache=bw_renorm_cache, bw_shrink_target=bw_shrink_target,
-                  bw_renorm_fused=bw_renorm_fused) # start with model_args from command line
+                  bw_renorm_fused=bw_renorm_fused, bw_whiten=bw_whiten, bw_ns_iters=bw_ns_iters, bw_ns_refresh=bw_ns_refresh, bw_fast=bw_fast, bw_side_stream=bw_side_stream) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -558,6 +564,31 @@ def bw_health():
 
 
 @torch.no_grad()
+def ns_drift():
+    """ns_warm: how far each layer's chained whitening matrix W is from the
+    exact ZCA of its (shrunk) buffer covariance A, averaged over layers."""
+    from model import shrink_cov
+    rows = []
+    for l in getattr(raw_model, "bw_layers", []):
+        cache = getattr(l, "renorm_cache", None)
+        if getattr(l, "whiten", None) != "ns_warm" or not cache or "W" not in cache:
+            continue
+        if cache["key"] != (l.running_cov.data_ptr(), l.running_cov._version):
+            continue
+        if "event" in cache:
+            cache["event"].synchronize()
+        A = shrink_cov(l.running_cov.double(), l.fix_factor, l.shrink_target)
+        W = cache["W"].double()
+        e, V = torch.linalg.eigh(A)
+        zca = (V * e.rsqrt().unsqueeze(-2)) @ V.transpose(-1, -2)
+        eye = torch.eye(A.size(-1), dtype=A.dtype, device=A.device)
+        n = lambda t: torch.linalg.matrix_norm(t).mean().item()
+        rows.append((n(W @ A @ W.transpose(-1, -2) - eye) / A.size(-1) ** 0.5,
+                     n(W - W.transpose(-1, -2)) / n(W), n(W - zca) / n(zca)))
+    return np.array(rows).mean(0) if rows else None
+
+
+@torch.no_grad()
 def conditioning():
     """Covariance condition number of each block's sublayer inputs on one
     training batch (eval mode). For the linear-layer inputs the smallest
@@ -618,6 +649,10 @@ while True:
                   f"running_mean_err {health['bw/running_mean_err']:.4f}, "
                   f"token_norm_cv in {health['bw/token_norm_cv_in']:.3f} "
                   f"out {health['bw/token_norm_cv_out']:.3f}")
+        drift = ns_drift()
+        if drift is not None:
+            print(f"step {iter_num}: ns_warm whitening_err {drift[0]:.2e} asym {drift[1]:.3f} "
+                  f"dist_to_zca {drift[2]:.3f}")
         cond = conditioning() if log_conditioning else {}
         for k, v in cond.items():
             gm = float(np.exp(np.mean(np.log(v))))

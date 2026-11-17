@@ -1,0 +1,2 @@
+# Current BW recipe at nanoGPT's default learning rate (1e-3), against s1-ln: same hyperparameters
+h-lr1e-3 --normalization_type=full_bw --bw_renorm=True --bw_renorm_stats=batch --bw_group_size=384 --batch_center_mode=running_mean --bw_momentum=0.7 --bw_warmup=none --bw_fix_factor=0.8 --abort_ref_log=base-s1_20485372.out --abort_ratio=1.5 --bw_fast=True --bw_side_stream=True

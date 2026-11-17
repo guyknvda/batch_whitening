@@ -1,0 +1,6 @@
+normalization_type=layer_norm: wall 13.96 ms/step (100-step blocks: 13.96, 13.96, 13.96), CPU issue 4.15 ms/step, summed kernel time 28.75 ms/step
+GPU span 14.22 ms/step, busy (any stream) 13.43 ms/step, per stream: 7: 13.43
+normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine bw_fuse_post_norm=False: wall 16.40 ms/step (100-step blocks: 16.41, 16.40, 16.41), CPU issue 342.56 ms/step, summed kernel time 38.28 ms/step
+GPU span 18.89 ms/step, busy (any stream) 16.70 ms/step, per stream: 7: 15.20, 18: 2.55
+normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 16.38 ms/step (100-step blocks: 16.40, 16.42, 16.38), CPU issue 343.20 ms/step, summed kernel time 38.28 ms/step
+GPU span 19.24 ms/step, busy (any stream) 16.65 ms/step, per stream: 18: 2.51, 7: 15.09

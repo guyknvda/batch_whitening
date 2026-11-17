@@ -1,0 +1,4 @@
+/home/hsivan/miniconda3/envs/env_python39/lib/python3.9/site-packages/torch/_inductor/compile_fx.py:124: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+  warnings.warn(
+post_eps=None: rel diff Y/dX/dg/db ['0.0e+00', '0.0e+00', '0.0e+00', '0.0e+00'] | W sym 1.2e-07 | WAW-I 8.4e-06 | chol W lower-tri True
+post_eps=1e-05: rel diff Y/dX/dg/db ['0.0e+00', '0.0e+00', '0.0e+00', '0.0e+00'] | W sym 1.2e-07 | WAW-I 8.4e-06 | chol W lower-tri True

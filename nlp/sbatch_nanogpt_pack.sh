@@ -30,8 +30,10 @@ echo "Job ID: ${SLURM_JOB_ID:-unknown}  Node: ${SLURMD_NODENAME:-unknown}  File:
 export CUDA_MPS_PIPE_DIRECTORY="/tmp/mps_${SLURM_JOB_ID:-local}/pipe"
 export CUDA_MPS_LOG_DIRECTORY="/tmp/mps_${SLURM_JOB_ID:-local}/log"
 mkdir -p "$CUDA_MPS_PIPE_DIRECTORY" "$CUDA_MPS_LOG_DIRECTORY"
+MAX_PAR="${MAX_PAR:-4}"
 MPS=0
-if command -v nvidia-cuda-mps-control >/dev/null && nvidia-cuda-mps-control -d; then
+# One run at a time gains nothing from MPS.
+if (( MAX_PAR > 1 )) && command -v nvidia-cuda-mps-control >/dev/null && nvidia-cuda-mps-control -d; then
     if python -c "import torch; torch.zeros(1, device='cuda')"; then
         MPS=1
     else
@@ -41,11 +43,12 @@ fi
 [[ $MPS == 0 ]] && unset CUDA_MPS_PIPE_DIRECTORY CUDA_MPS_LOG_DIRECTORY
 echo "MPS: $MPS"
 
-MAX_PAR="${MAX_PAR:-4}"
 while read -r name args; do
     [[ -z "$name" || "$name" == \#* ]] && continue
     while (( $(jobs -rp | wc -l) >= MAX_PAR )); do sleep 5; done
     echo "start $name: $args"
+    # Separate compile caches: runs sharing one have crashed at startup.
+    TORCHINDUCTOR_CACHE_DIR="/tmp/inductor-$name" TRITON_CACHE_DIR="/tmp/triton-$name" \
     python -u ./nlp/nano_gpt/train.py --wandb_run_name="$name" --out_dir="/tmp/out-$name" $args \
         > "nlp/study/logs/$name.out" 2>&1 &
 done < "$1"

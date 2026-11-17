@@ -25,7 +25,7 @@ BEST_SEEDS = ["s3-best-lr1.5e-3", "s4-best-lr1.5e-3-s1", "s4-best-lr1.5e-3-s2"]
 LR2_SEEDS = ["s2-rm-nw-lr2e-3-ff0.8", "s3-best-s1", "s3-best-s2"]
 D_LN_SEEDS = ["s3-d-ln", "s5-d-ln-s1", "s5-d-ln-s2"]
 D_BEST_SEEDS = ["s4-d-ff0.4-m0.3", "s5-d-m0.3-s1", "s5-d-m0.3-s2"]
-LN_MS, BW_MS = 14.0, 23.1  # ms / iter on one H100, alone (nlp/study/logs/timing-*.out)
+LN_MS, BW_MS = 13.94, 15.72  # ms / iter on one H100, alone, synchronized (nlp/study/logs/timing-*.out)
 D10_LN = ["s6-d10k-ln-s1", "s6-d10k-ln-s2"]
 D10_BW = ["s6-d10k-bw-s1", "s6-d10k-bw-s2"]
 
@@ -152,24 +152,24 @@ def seeds_table(groups, base_names, low=0.1, last=5000, high=1.0):
 
 def final_table():
     return seeds_table([
-        ("LayerNorm, lr 1e-3 (baseline)", LN_SEEDS, "14.0"),
-        ("<b>BW, lr 1.5e-3 (recommended)</b>", BEST_SEEDS, "23.1"),
-        ("BW, lr 2e-3", LR2_SEEDS, "23.1"),
+        ("LayerNorm, lr 1e-3 (baseline)", LN_SEEDS, f"{LN_MS:.1f}"),
+        ("<b>BW, lr 1.5e-3 (recommended)</b>", BEST_SEEDS, f"{BW_MS:.1f}"),
+        ("BW, lr 2e-3", LR2_SEEDS, f"{BW_MS:.1f}"),
     ], LN_SEEDS)
 
 
 def dropout_table():
     return seeds_table([
-        ("LayerNorm, lr 1e-3 (vanilla nanoGPT)", D_LN_SEEDS, "14.0"),
-        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D_BEST_SEEDS, "23.1"),
+        ("LayerNorm, lr 1e-3 (vanilla nanoGPT)", D_LN_SEEDS, f"{LN_MS:.1f}"),
+        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D_BEST_SEEDS, f"{BW_MS:.1f}"),
     ], D_LN_SEEDS, low=0.7)
 
 
 def dropout_10k_table():
     return seeds_table([
-        ("LayerNorm, lr 1e-3", D10_LN, "14.0"),
-        ("LayerNorm, lr 2e-3", ["s6-d10k-ln-lr2e-3"], "14.0"),
-        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D10_BW, "23.1"),
+        ("LayerNorm, lr 1e-3", D10_LN, f"{LN_MS:.1f}"),
+        ("LayerNorm, lr 2e-3", ["s6-d10k-ln-lr2e-3"], f"{LN_MS:.1f}"),
+        ("<b>BW, momentum 0.3, ff 0.4, lr 2e-3</b>", D10_BW, f"{BW_MS:.1f}"),
     ], D10_LN, low=0.3, last=10000, high=0.5)
 
 
@@ -181,6 +181,21 @@ def catch_up(ln, bw, last):
     return (f"BW (best) reaches LayerNorm's final train loss ({target:.3f}) at step {st:.0f}, "
             f"{100 * (1 - st / last):.0f}% fewer steps ({last / st:.2f}&times; faster per step; "
             f"at {BW_MS / LN_MS:.2f}&times; the cost per step, about {BW_MS / LN_MS * st / last:.2f}&times; LayerNorm's wall-clock time).")
+
+
+def wall_table():
+    """Wall-clock time to LayerNorm's final train loss, both runs with the same hyperparameters."""
+    rows = []
+    for label, ln, bw in (("1e-3 (nanoGPT default)", "s1-ln", "h-lr1e-3"),
+                          ("1.5e-3", "s2-ln-lr1.5e-3", "f-ln0-fused")):
+        a, b = R[ln]["ev"], R[bw]["ev"]
+        t = a[5000][0]
+        st = steps_to(b, t)
+        lt, bt = 5000 * LN_MS / 1e3, st * BW_MS / 1e3
+        rows.append(f"<tr><td>{label}</td><td class=num>{t:.4f}</td><td class=num>{b[5000][0]:.4f}</td>"
+                    f"<td class=num>{rel(bw, ln):+.1f}%</td><td class=num>{st:.0f}</td>"
+                    f"<td class=num>{lt:.1f} s</td><td class=num>{bt:.1f} s ({100 * (bt / lt - 1):+.1f}%)</td></tr>")
+    return "\n".join(rows)
 
 
 def gap_table(ln, bw, steps):
@@ -372,9 +387,10 @@ TLDR = f"""<b>Summary.</b> Causal BW gives a clear, seed-robust gain over LayerN
   <li><b>No dropout:</b> {-pct(BEST_SEEDS, LN_SEEDS):.0f}% lower mean train loss and {-pct(BEST_SEEDS, LN_SEEDS, 1):.0f}% lower final train loss
   on every seed; loss 0.1 is reached {-pct(BEST_SEEDS, LN_SEEDS, 3):.0f}% sooner. Validation is unchanged. Before this study the causal version gave 8%; the leaky one 13%.</li>
   <li><b>Vanilla nanoGPT (dropout 0.2):</b> {-pct(D_BEST_SEEDS, D_LN_SEEDS, low=0.7):.0f}% lower mean and {-pct(D_BEST_SEEDS, D_LN_SEEDS, 1, 0.7):.0f}% lower final train loss on every seed, validation tied. Over 10k steps the final gain grows to &minus;18% (2 seeds). Before the fix the best BW setting was 2% ahead, with the leak.</li>
-  <li><b>Recipe:</b> renorm with shared statistics, <code>running_mean</code>, full width (group 384), no warmup, no gradient boost, BW on every MLP input followed by the LayerNorm, and a higher learning rate (BW 1.5e-3; LayerNorm's best is 1e-3).
+  <li><b>Recipe:</b> renorm with shared statistics, <code>running_mean</code>, full width (group 384), no warmup, no gradient boost, BW on every MLP input followed by a LayerNorm without gain or bias (applied inside BW), and a higher learning rate (BW 1.5e-3; LayerNorm's best is 1e-3).
   No dropout: momentum 0.7, <code>fix_factor</code> 0.8. Dropout 0.2: more history and shrinkage, momentum 0.3, <code>fix_factor</code> 0.4, lr 2e-3.</li>
-  <li><b>Cost:</b> 1.65&times; per iteration (23.1 against 14.0 ms, down from 27.7 with two exact speedups), so per step BW wins; in wall-clock time it reaches LayerNorm's final loss in about 1.45&times; LayerNorm's time. BW in only the first 3 blocks keeps only a third of the gain.</li>
+  <li><b>Cost:</b> 1.13&times; per iteration (15.7 against 13.9 ms, down from 27.7 with exact speedups). With the same hyperparameters for both, BW reaches LayerNorm's final loss in 10&ndash;13% fewer steps, so in wall-clock time it is about even (&minus;2% to +1%).
+  Whitening with <b>ns_chol</b> (Newton&ndash;Schulz forward, Cholesky backward) needs fewer steps at the same cost: &minus;4.7% wall-clock time against +0.1% for Cholesky (3 seeds each), see <a href="bw_ns_chol.html">bw_ns_chol.html</a>.</li>
   <li><b>GPT-2 (124M, 5000 steps):</b> BW is ahead at every step but only by 0.03&ndash;0.04 train loss (about 7% fewer steps), at both lr 6e-4 and 1.2e-3; at 1.14&times; per iteration it does not yet win in wall-clock time.</li>
   <li><b>Dropped:</b> <code>calibrated</code> (ties LayerNorm at 2.5&ndash;7&times; the cost), warmup, gradient boost (diverges above 1), BW on the attention input, BW without the following LayerNorm.</li>
 </ul>
@@ -473,17 +489,30 @@ Without dropout every model overfits after about step 1000 (validation rises); B
 </table>
 <p class="cap">Nothing beats the recipe beyond seed noise (&plusmn;1%): ff 0.8 is the optimum (0.7: &minus;12.5% at lr 2e-3; 0.85: &minus;13.0%; 0.9: &minus;10.5%), shrinking toward the identity is slightly worse, and a longer learning-rate warmup hurts.</p>
 
-<h2>Cost (one H100, alone)</h2>
+<h2>Cost and wall-clock time (one H100, alone)</h2>
 <table>
-<tr><th>Configuration</th><th class="num">One layer, forward + backward (ms)</th><th class="num">Training (ms / iter)</th></tr>
-<tr><td>LayerNorm</td><td class=num>0.29</td><td class=num>14.0</td></tr>
-<tr><td>BW, before</td><td class=num>2.14</td><td class=num>27.7</td></tr>
-<tr><td>BW, whitening-matrix cache</td><td class=num>1.81</td><td class=num>25.8</td></tr>
-<tr><td><b>BW, cache + hand-written backward (now the default)</b></td><td class=num>1.27</td><td class=num>23.1</td></tr>
-<tr><td>BW, no statistics gradient (diverges; lower bound)</td><td class=num>1.14</td><td class=num>21.9</td></tr>
+<tr><th>Configuration</th><th class="num">Training (ms / iter)</th></tr>
+<tr><td>LayerNorm</td><td class=num>{LN_MS:.1f}</td></tr>
+<tr><td>BW, original</td><td class=num>27.7</td></tr>
+<tr><td>BW, whitening-matrix cache + hand-written backward</td><td class=num>23.1</td></tr>
+<tr><td>BW, single fused pass per layer, Cholesky on a side CUDA stream, compiled glue</td><td class=num>16.8</td></tr>
+<tr><td>BW, + LayerNorm after BW without gain or bias, applied inside BW; faster matrix layouts</td><td class=num>16.1</td></tr>
+<tr><td><b>BW, + batch statistics on the side stream, shorter backward (now the default)</b></td><td class=num>{BW_MS:.1f}</td></tr>
+<tr><td>BW with ns_chol whitening (<a href="bw_ns_chol.html">bw_ns_chol.html</a>)</td><td class=num>15.8</td></tr>
 </table>
-<p class="cap">Both speedups are exact. Cache: in <code>running_mean</code> mode the buffer after the update equals this step's whitening covariance bit for bit, so next step's buffer whitening matrix is this step's batch one, which skips one Cholesky and one triangular inverse per layer (rerun of the best recipe: &minus;14.4% against &minus;14.3%). Hand-written backward (<code>_RenormWhitenFn</code>): same forward bit for bit and the same gradient (10<sup>&minus;16</sup> in float64), with 5 instead of 7 activation-sized matrix products and no extra elementwise passes.
-With 12% fewer steps to LayerNorm's final loss, BW now takes about 1.45&times; LayerNorm's wall-clock time to reach it (was 1.76&times;). <code>nlp/nano_gpt/bench_bw.py</code> measures the per-layer time.</p>
+<p class="cap">All speedups are exact (the fast path matches the reference to 10<sup>&minus;6</sup>). Synchronized timing over 100-step blocks (<code>nlp/nano_gpt/profile_step.py</code>). Dropping the gain and bias of the LayerNorm after BW does not change the loss (&minus;15.4% for the new default, seed 1337, against &minus;14.7% before).</p>
+<table>
+<tr><th>Learning rate (same for both; everything else identical, 5000-step schedule)</th><th class="num">LayerNorm final</th><th class="num">BW final</th><th class="num">Mean train loss</th>
+<th class="num">BW steps to LayerNorm's final</th><th class="num">LayerNorm time</th><th class="num">BW time to that loss</th></tr>
+{wall_table()}
+</table>
+<p class="cap">One seed (1337). Time = steps &times; ms / iter, training steps only.</p>
+<ul class="summary">
+  <li><b>Per step BW wins clearly, with no hyperparameter changed:</b> 11&ndash;16% lower mean train loss at either learning rate.</li>
+  <li><b>In wall-clock time it is about even:</b> BW needs 10&ndash;13% fewer steps but costs 13% more per step.</li>
+  <li><b>ns_chol whitening wins in wall-clock time:</b> it reaches LayerNorm's final loss in about 4200 steps at the same step time: &minus;4.7% against +0.1% for Cholesky (mean of 3 seeds; <a href="bw_ns_chol.html">bw_ns_chol.html</a>).</li>
+  <li><b>The remaining 1.8 ms is mostly fixed per-step overhead</b> (CPU launches and the Cholesky chain), not GPU throughput: at 1.5&times; the batch BW's extra time grows only from 2.1 to 2.3 ms.</li>
+</ul>
 
 <h2>Conditioning: does BW help the MLP input, and does it predict the gain?</h2>
 <table>

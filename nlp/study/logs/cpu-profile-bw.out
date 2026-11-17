@@ -1,0 +1,44 @@
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+CPU per layer: forward 0.822 ms, backward 1.446 ms
+STAGE:2026-11-16 13:44:27 4065691:4065691 ActivityProfilerController.cpp:314] Completed Stage: Warm Up
+STAGE:2026-11-16 13:44:27 4065691:4065691 ActivityProfilerController.cpp:320] Completed Stage: Collection
+STAGE:2026-11-16 13:44:27 4065691:4065691 ActivityProfilerController.cpp:324] Completed Stage: Post Processing
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                  Torch-Compiled Region        17.60%       2.234ms        27.42%       3.481ms     174.050us            20  
+                                    aten::empty_strided        10.46%       1.328ms        11.38%       1.444ms      72.200us            20  
+                                               aten::mm         7.33%     930.000us         9.41%       1.194ms      14.925us            80  
+                                       cudaLaunchKernel         7.25%     920.000us         7.25%     920.000us       2.421us           380  
+                                            aten::addmm         5.67%     720.000us         7.06%     896.000us      44.800us            20  
+                                      _RenormWhitenFast         4.19%     532.000us        14.99%       1.903ms      95.150us            20  
+                          aten::linalg_solve_triangular         4.04%     513.000us         7.25%     920.000us      46.000us            20  
+                               aten::linalg_cholesky_ex         3.92%     498.000us         7.77%     986.000us      49.300us            20  
+                                            aten::copy_         3.19%     405.000us         6.11%     776.000us       7.760us           100  
+                                              aten::eye         2.88%     365.000us        10.12%       1.284ms      29.860us            43  
+                                            aten::empty         2.66%     338.000us         2.66%     338.000us       2.414us           140  
+                                        cudaMemcpyAsync         2.24%     284.000us         2.24%     284.000us       4.733us            60  
+                                aten::native_layer_norm         1.96%     249.000us         3.74%     475.000us      23.750us            20  
+                         triton_poi_fused_add_div_mul_0         1.93%     245.000us         2.28%     290.000us      14.500us            20  
+                                         cuLaunchKernel         1.72%     218.000us         1.72%     218.000us       2.180us           100  
+                                              aten::mul         1.52%     193.000us         2.06%     261.000us      13.050us            20  
+                                           aten::addmv_         1.44%     183.000us         2.13%     271.000us      13.550us            20  
+                 triton_poi_fused_add_div_eye_mul_sub_1         1.31%     166.000us         1.66%     211.000us      10.550us            20  
+                               TorchDynamo Cache Lookup         1.29%     164.000us         1.29%     164.000us       8.200us            20  
+                                            aten::fill_         1.12%     142.000us         1.82%     231.000us       5.775us            40  
+                                 triton_poi_fused_mul_2         1.06%     135.000us         1.36%     173.000us       8.650us            20  
+                                             aten::view         0.98%     125.000us         0.98%     125.000us       0.694us           180  
+                                          aten::reshape         0.96%     122.000us         1.61%     205.000us       2.562us            80  
+                                    aten::record_stream         0.96%     122.000us         0.96%     122.000us       1.017us           120  
+                                         cudaEventQuery         0.91%     116.000us         0.91%     116.000us       1.221us            95  
+                                           aten::matmul         0.91%     115.000us         8.04%       1.020ms      17.000us            60  
+                                            aten::tril_         0.89%     113.000us         1.29%     164.000us       8.200us            20  
+                                          aten::resize_         0.88%     112.000us         0.88%     112.000us       2.800us            40  
+                                        cudaMemsetAsync         0.87%     110.000us         0.87%     110.000us       1.833us            60  
+                                 triton_poi_fused_sub_4         0.83%     105.000us         1.16%     147.000us       7.350us            20  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 12.694ms
+

@@ -1,0 +1,13 @@
+max |diff| triton vs native: 9.5367431640625e-07 0.23425817489624023
+GPU   39.1 us  CPU    8.2 us  native forward
+GPU   28.4 us  CPU    6.9 us  native backward
+GPU   29.7 us  CPU   30.9 us  compiled RMS forward
+GPU   27.5 us  CPU   25.8 us  compiled RMS backward
+GPU   49.9 us  CPU   50.6 us  Triton RMS forward, 1 rows/program
+GPU   45.7 us  CPU   46.6 us  Triton RMS backward, 1 rows/program
+GPU   49.0 us  CPU   50.6 us  Triton RMS forward, 2 rows/program
+GPU   45.9 us  CPU   47.7 us  Triton RMS backward, 2 rows/program
+GPU   48.3 us  CPU   49.5 us  Triton RMS forward, 4 rows/program
+GPU   44.9 us  CPU   45.9 us  Triton RMS backward, 4 rows/program
+GPU   48.4 us  CPU   48.5 us  Triton RMS forward, 8 rows/program
+GPU   44.9 us  CPU   45.2 us  Triton RMS backward, 8 rows/program

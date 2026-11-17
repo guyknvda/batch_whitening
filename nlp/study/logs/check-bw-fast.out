@@ -1,0 +1,11 @@
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+n_groups: 1, group_size: 384
+cholesky  fast+side stream vs reference, 20 steps, max rel err 8.2e-07
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+ns        fast+side stream vs reference, 20 steps, max rel err 8.8e-07

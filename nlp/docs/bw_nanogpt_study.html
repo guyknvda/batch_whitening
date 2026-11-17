@@ -61,9 +61,10 @@ All BW runs use the causal fix (<code>bw_renorm=True</code>, shared statistics).
   <li><b>No dropout:</b> 15% lower mean train loss and 7% lower final train loss
   on every seed; loss 0.1 is reached 6% sooner. Validation is unchanged. Before this study the causal version gave 8%; the leaky one 13%.</li>
   <li><b>Vanilla nanoGPT (dropout 0.2):</b> 4% lower mean and 10% lower final train loss on every seed, validation tied. Over 10k steps the final gain grows to &minus;18% (2 seeds). Before the fix the best BW setting was 2% ahead, with the leak.</li>
-  <li><b>Recipe:</b> renorm with shared statistics, <code>running_mean</code>, full width (group 384), no warmup, no gradient boost, BW on every MLP input followed by the LayerNorm, and a higher learning rate (BW 1.5e-3; LayerNorm's best is 1e-3).
+  <li><b>Recipe:</b> renorm with shared statistics, <code>running_mean</code>, full width (group 384), no warmup, no gradient boost, BW on every MLP input followed by a LayerNorm without gain or bias (applied inside BW), and a higher learning rate (BW 1.5e-3; LayerNorm's best is 1e-3).
   No dropout: momentum 0.7, <code>fix_factor</code> 0.8. Dropout 0.2: more history and shrinkage, momentum 0.3, <code>fix_factor</code> 0.4, lr 2e-3.</li>
-  <li><b>Cost:</b> 1.65&times; per iteration (23.1 against 14.0 ms, down from 27.7 with two exact speedups), so per step BW wins; in wall-clock time it reaches LayerNorm's final loss in about 1.45&times; LayerNorm's time. BW in only the first 3 blocks keeps only a third of the gain.</li>
+  <li><b>Cost:</b> 1.13&times; per iteration (15.7 against 13.9 ms, down from 27.7 with exact speedups). With the same hyperparameters for both, BW reaches LayerNorm's final loss in 10&ndash;13% fewer steps, so in wall-clock time it is about even (&minus;2% to +1%).
+  Whitening with <b>ns_chol</b> (Newton&ndash;Schulz forward, Cholesky backward) needs fewer steps at the same cost: &minus;4.7% wall-clock time against +0.1% for Cholesky (3 seeds each), see <a href="bw_ns_chol.html">bw_ns_chol.html</a>.</li>
   <li><b>GPT-2 (124M, 5000 steps):</b> BW is ahead at every step but only by 0.03&ndash;0.04 train loss (about 7% fewer steps), at both lr 6e-4 and 1.2e-3; at 1.14&times; per iteration it does not yet win in wall-clock time.</li>
   <li><b>Dropped:</b> <code>calibrated</code> (ties LayerNorm at 2.5&ndash;7&times; the cost), warmup, gradient boost (diverges above 1), BW on the attention input, BW without the following LayerNorm.</li>
 </ul>
@@ -74,9 +75,9 @@ All BW runs use the causal fix (<code>bw_renorm=True</code>, shared statistics).
 <table>
 <tr><th>Configuration</th><th class="num">Seeds</th><th class="num">ms / iter</th><th class="num">Mean train loss</th><th class="num">Final train loss</th>
 <th class="num">Steps to loss 1.0</th><th class="num">Steps to loss 0.1</th><th class="num">Best val</th></tr>
-<tr><td>LayerNorm, lr 1e-3 (baseline)</td><td class=num>3</td><td class=num>14.0</td><td class="num">0.494 <span class="rng">0.490&ndash;0.497</span></td><td class="num">0.0838 <span class="rng">0.0830&ndash;0.0845</span></td><td class="num">1176 <span class="rng">1164&ndash;1191</span></td><td class="num">3987 <span class="rng">3974&ndash;4007</span></td><td class="num">1.543 <span class="rng">1.539&ndash;1.550</span></td></tr>
-<tr><td><b>BW, lr 1.5e-3 (recommended)</b></td><td class=num>3</td><td class=num>23.1</td><td class="num better">0.420 (&minus;15%) <span class="rng">0.413&ndash;0.427</span></td><td class="num better">0.0781 (&minus;7%) <span class="rng">0.0770&ndash;0.0795</span></td><td class="num better">970 (&minus;18%) <span class="rng">943&ndash;991</span></td><td class="num better">3738 (&minus;6%) <span class="rng">3679&ndash;3812</span></td><td class="num">1.546 (+0%) <span class="rng">1.537&ndash;1.552</span></td></tr>
-<tr><td>BW, lr 2e-3</td><td class=num>3</td><td class=num>23.1</td><td class="num better">0.430 (&minus;13%) <span class="rng">0.423&ndash;0.442</span></td><td class="num better">0.0772 (&minus;8%) <span class="rng">0.0761&ndash;0.0792</span></td><td class="num better">990 (&minus;16%) <span class="rng">963&ndash;1033</span></td><td class="num better">3726 (&minus;7%) <span class="rng">3655&ndash;3771</span></td><td class="num">1.553 (+1%) <span class="rng">1.551&ndash;1.554</span></td></tr>
+<tr><td>LayerNorm, lr 1e-3 (baseline)</td><td class=num>3</td><td class=num>13.9</td><td class="num">0.494 <span class="rng">0.490&ndash;0.497</span></td><td class="num">0.0838 <span class="rng">0.0830&ndash;0.0845</span></td><td class="num">1176 <span class="rng">1164&ndash;1191</span></td><td class="num">3987 <span class="rng">3974&ndash;4007</span></td><td class="num">1.543 <span class="rng">1.539&ndash;1.550</span></td></tr>
+<tr><td><b>BW, lr 1.5e-3 (recommended)</b></td><td class=num>3</td><td class=num>15.7</td><td class="num better">0.420 (&minus;15%) <span class="rng">0.413&ndash;0.427</span></td><td class="num better">0.0781 (&minus;7%) <span class="rng">0.0770&ndash;0.0795</span></td><td class="num better">970 (&minus;18%) <span class="rng">943&ndash;991</span></td><td class="num better">3738 (&minus;6%) <span class="rng">3679&ndash;3812</span></td><td class="num">1.546 (+0%) <span class="rng">1.537&ndash;1.552</span></td></tr>
+<tr><td>BW, lr 2e-3</td><td class=num>3</td><td class=num>15.7</td><td class="num better">0.430 (&minus;13%) <span class="rng">0.423&ndash;0.442</span></td><td class="num better">0.0772 (&minus;8%) <span class="rng">0.0761&ndash;0.0792</span></td><td class="num better">990 (&minus;16%) <span class="rng">963&ndash;1033</span></td><td class="num better">3726 (&minus;7%) <span class="rng">3655&ndash;3771</span></td><td class="num">1.553 (+1%) <span class="rng">1.551&ndash;1.554</span></td></tr>
 </table>
 <p class="cap">Mean over seeds (range in grey). Mean train loss = average eval-mode train loss over steps 250&ndash;5000 (area under the curve). Bold green = better than LayerNorm.</p>
 <div class="legend-line"><span><i style="background:#000"></i>LayerNorm (0%)</span><span><i style="background:#afb8c1"></i>BW, renorm default (warmup on, lr 1e-3)</span><span><i style="background:#0969da"></i>BW, warmup off</span><span><i style="background:#1a7f37"></i>BW best recipe (3 seeds)</span></div>
@@ -108,7 +109,7 @@ All BW runs use the causal fix (<code>bw_renorm=True</code>, shared statistics).
 <polyline fill="none" stroke="#1a7f37" stroke-width="2.5" points="90.4,172.1 124.8,150.1 159.2,150.6 193.6,170.8 228.0,209.4 262.4,240.0 296.8,240.0 331.2,240.0 365.6,212.8 400.0,192.2 434.4,172.9 468.8,166.3 503.2,163.8 537.6,154.5 572.0,156.9 606.4,158.5 640.8,154.9 675.2,154.7 709.6,153.2 744.0,153.4"/>
 </svg>
 <p class="figcap"><b>Figure 1:</b> Eval-mode train loss relative to LayerNorm (mean of 3 LayerNorm seeds), every 250 steps. Below 0 = better.
-BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer steps (1.13&times; faster per step; at 1.65&times; the cost per step, about 1.45&times; LayerNorm's wall-clock time).</p>
+BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer steps (1.13&times; faster per step; at 1.13&times; the cost per step, about 0.99&times; LayerNorm's wall-clock time).</p>
 <div class="legend-line"><span><i style="background:#000"></i>LayerNorm, lr 1e-3 (3 seeds)</span><span><i style="background:#0969da"></i>BW, same lr 1e-3, ff 0.9 (1 seed)</span><span><i style="background:#1a7f37"></i>BW best recipe, lr 1.5e-3 (3 seeds)</span><span>solid = train, dashed = val</span></div>
 <svg viewBox="0 0 760 320" width="100%" role="img" aria-label="Learning curves, dropout 0">
 <line x1="56" x2="744" y1="280.0" y2="280.0" stroke="#d1d9e0"/>
@@ -143,7 +144,7 @@ BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer s
 <p class="figcap"><b>Figure 2:</b> Learning curves, dropout 0. Eval-mode train loss (solid) and validation loss (dashed), every 250 steps, averaged over the seeds of each configuration.
 The blue run keeps LayerNorm's learning rate and differs from the BW defaults only by warmup off.
 Without dropout every model overfits after about step 1000 (validation rises); BW fits faster, so its validation loss rises sooner and ends higher (4.46 against 4.26 at step 5000), while the best validation loss is tied.
-BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer steps (1.13&times; faster per step; at 1.65&times; the cost per step, about 1.45&times; LayerNorm's wall-clock time).</p>
+BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer steps (1.13&times; faster per step; at 1.13&times; the cost per step, about 0.99&times; LayerNorm's wall-clock time).</p>
 
 <h2>What each knob does</h2>
 <table>
@@ -249,17 +250,31 @@ BW (best) reaches LayerNorm's final train loss (0.084) at step 4408, 12% fewer s
 </table>
 <p class="cap">Nothing beats the recipe beyond seed noise (&plusmn;1%): ff 0.8 is the optimum (0.7: &minus;12.5% at lr 2e-3; 0.85: &minus;13.0%; 0.9: &minus;10.5%), shrinking toward the identity is slightly worse, and a longer learning-rate warmup hurts.</p>
 
-<h2>Cost (one H100, alone)</h2>
+<h2>Cost and wall-clock time (one H100, alone)</h2>
 <table>
-<tr><th>Configuration</th><th class="num">One layer, forward + backward (ms)</th><th class="num">Training (ms / iter)</th></tr>
-<tr><td>LayerNorm</td><td class=num>0.29</td><td class=num>14.0</td></tr>
-<tr><td>BW, before</td><td class=num>2.14</td><td class=num>27.7</td></tr>
-<tr><td>BW, whitening-matrix cache</td><td class=num>1.81</td><td class=num>25.8</td></tr>
-<tr><td><b>BW, cache + hand-written backward (now the default)</b></td><td class=num>1.27</td><td class=num>23.1</td></tr>
-<tr><td>BW, no statistics gradient (diverges; lower bound)</td><td class=num>1.14</td><td class=num>21.9</td></tr>
+<tr><th>Configuration</th><th class="num">Training (ms / iter)</th></tr>
+<tr><td>LayerNorm</td><td class=num>13.9</td></tr>
+<tr><td>BW, original</td><td class=num>27.7</td></tr>
+<tr><td>BW, whitening-matrix cache + hand-written backward</td><td class=num>23.1</td></tr>
+<tr><td>BW, single fused pass per layer, Cholesky on a side CUDA stream, compiled glue</td><td class=num>16.8</td></tr>
+<tr><td>BW, + LayerNorm after BW without gain or bias, applied inside BW; faster matrix layouts</td><td class=num>16.1</td></tr>
+<tr><td><b>BW, + batch statistics on the side stream, shorter backward (now the default)</b></td><td class=num>15.7</td></tr>
+<tr><td>BW with ns_chol whitening (<a href="bw_ns_chol.html">bw_ns_chol.html</a>)</td><td class=num>15.8</td></tr>
 </table>
-<p class="cap">Both speedups are exact. Cache: in <code>running_mean</code> mode the buffer after the update equals this step's whitening covariance bit for bit, so next step's buffer whitening matrix is this step's batch one, which skips one Cholesky and one triangular inverse per layer (rerun of the best recipe: &minus;14.4% against &minus;14.3%). Hand-written backward (<code>_RenormWhitenFn</code>): same forward bit for bit and the same gradient (10<sup>&minus;16</sup> in float64), with 5 instead of 7 activation-sized matrix products and no extra elementwise passes.
-With 12% fewer steps to LayerNorm's final loss, BW now takes about 1.45&times; LayerNorm's wall-clock time to reach it (was 1.76&times;). <code>nlp/nano_gpt/bench_bw.py</code> measures the per-layer time.</p>
+<p class="cap">All speedups are exact (the fast path matches the reference to 10<sup>&minus;6</sup>). Synchronized timing over 100-step blocks (<code>nlp/nano_gpt/profile_step.py</code>). Dropping the gain and bias of the LayerNorm after BW does not change the loss (&minus;15.4% for the new default, seed 1337, against &minus;14.7% before).</p>
+<table>
+<tr><th>Learning rate (same for both; everything else identical, 5000-step schedule)</th><th class="num">LayerNorm final</th><th class="num">BW final</th><th class="num">Mean train loss</th>
+<th class="num">BW steps to LayerNorm's final</th><th class="num">LayerNorm time</th><th class="num">BW time to that loss</th></tr>
+<tr><td>1e-3 (nanoGPT default)</td><td class=num>0.0845</td><td class=num>0.0812</td><td class=num>-10.7%</td><td class=num>4486</td><td class=num>69.7 s</td><td class=num>70.5 s (+1.2%)</td></tr>
+<tr><td>1.5e-3</td><td class=num>0.0828</td><td class=num>0.0761</td><td class=num>-16.0%</td><td class=num>4338</td><td class=num>69.7 s</td><td class=num>68.2 s (-2.2%)</td></tr>
+</table>
+<p class="cap">One seed (1337). Time = steps &times; ms / iter, training steps only.</p>
+<ul class="summary">
+  <li><b>Per step BW wins clearly, with no hyperparameter changed:</b> 11&ndash;16% lower mean train loss at either learning rate.</li>
+  <li><b>In wall-clock time it is about even:</b> BW needs 10&ndash;13% fewer steps but costs 13% more per step.</li>
+  <li><b>ns_chol whitening wins in wall-clock time:</b> it reaches LayerNorm's final loss in about 4200 steps at the same step time: &minus;4.7% against +0.1% for Cholesky (mean of 3 seeds; <a href="bw_ns_chol.html">bw_ns_chol.html</a>).</li>
+  <li><b>The remaining 1.8 ms is mostly fixed per-step overhead</b> (CPU launches and the Cholesky chain), not GPU throughput: at 1.5&times; the batch BW's extra time grows only from 2.1 to 2.3 ms.</li>
+</ul>
 
 <h2>Conditioning: does BW help the MLP input, and does it predict the gain?</h2>
 <table>
@@ -276,15 +291,15 @@ With 12% fewer steps to LayerNorm's final loss, BW now takes about 1.45&times; L
 <ul class="summary">
   <li><b>BW conditions the MLP input much better early on:</b> 10&ndash;30&times; better than LayerNorm at step 250 and 4&ndash;14&times; at step 1000 (layers 1&ndash;5). By step 5000 LayerNorm has caught up, and the best recipe, with its higher learning rate, ends <i>worse</i> conditioned than LayerNorm while training best.</li>
   <li><b>Layer 0 stays very ill-conditioned</b> (10<sup>3</sup>&ndash;10<sup>6</sup>) in every model: its input is the token plus position embedding of a 65-symbol vocabulary, and the whitening shrinkage (<code>fix_factor</code>) caps how much BW can lift its smallest directions.</li>
-  <li><b>As a predictor it works early and within one knob.</b> Across 60 runs, the rank correlation between MLP-input condition number and mean train loss is +0.71 at step 250 and +0.17 at step 5000, matching a gain that comes from early training. Within group size and <code>fix_factor</code>, worse conditioning means worse loss (group 128: about 10<sup>5</sup> at step 250, the worst completed BW run). Across modes and learning rates it misleads: <code>leave_one_out</code> conditions best and trains worse than <code>running_mean</code>.</li>
+  <li><b>As a predictor it works early and within one knob.</b> Across 80 runs, the rank correlation between MLP-input condition number and mean train loss is +0.74 at step 250 and -0.01 at step 5000, matching a gain that comes from early training. Within group size and <code>fix_factor</code>, worse conditioning means worse loss (group 128: about 10<sup>5</sup> at step 250, the worst completed BW run). Across modes and learning rates it misleads: <code>leave_one_out</code> conditions best and trains worse than <code>running_mean</code>.</li>
 </ul>
 
 <h2>Vanilla nanoGPT (dropout 0.2 everywhere)</h2>
 <table>
 <tr><th>Configuration</th><th class="num">Seeds</th><th class="num">ms / iter</th><th class="num">Mean train loss</th><th class="num">Final train loss</th>
 <th class="num">Steps to loss 1.0</th><th class="num">Steps to loss 0.7</th><th class="num">Best val</th></tr>
-<tr><td>LayerNorm, lr 1e-3 (vanilla nanoGPT)</td><td class=num>3</td><td class=num>14.0</td><td class="num">1.004 <span class="rng">1.000&ndash;1.011</span></td><td class="num">0.6233 <span class="rng">0.6149&ndash;0.6363</span></td><td class="num">2301 <span class="rng">2273&ndash;2331</span></td><td class="num">4106 <span class="rng">4052&ndash;4201</span></td><td class="num">1.466 <span class="rng">1.463&ndash;1.468</span></td></tr>
-<tr><td><b>BW, momentum 0.3, ff 0.4, lr 2e-3</b></td><td class=num>3</td><td class=num>23.1</td><td class="num better">0.963 (&minus;4%) <span class="rng">0.953&ndash;0.970</span></td><td class="num better">0.5604 (&minus;10%) <span class="rng">0.5439&ndash;0.5730</span></td><td class="num better">2184 (&minus;5%) <span class="rng">2138&ndash;2227</span></td><td class="num better">3646 (&minus;11%) <span class="rng">3565&ndash;3710</span></td><td class="num">1.466 (&minus;0%) <span class="rng">1.459&ndash;1.471</span></td></tr>
+<tr><td>LayerNorm, lr 1e-3 (vanilla nanoGPT)</td><td class=num>3</td><td class=num>13.9</td><td class="num">1.004 <span class="rng">1.000&ndash;1.011</span></td><td class="num">0.6233 <span class="rng">0.6149&ndash;0.6363</span></td><td class="num">2301 <span class="rng">2273&ndash;2331</span></td><td class="num">4106 <span class="rng">4052&ndash;4201</span></td><td class="num">1.466 <span class="rng">1.463&ndash;1.468</span></td></tr>
+<tr><td><b>BW, momentum 0.3, ff 0.4, lr 2e-3</b></td><td class=num>3</td><td class=num>15.7</td><td class="num better">0.963 (&minus;4%) <span class="rng">0.953&ndash;0.970</span></td><td class="num better">0.5604 (&minus;10%) <span class="rng">0.5439&ndash;0.5730</span></td><td class="num better">2184 (&minus;5%) <span class="rng">2138&ndash;2227</span></td><td class="num better">3646 (&minus;11%) <span class="rng">3565&ndash;3710</span></td><td class="num">1.466 (&minus;0%) <span class="rng">1.459&ndash;1.471</span></td></tr>
 </table>
 <table>
 <tr><th>Variant (seed 1337, renorm, warmup off, lr 2e-3 unless stated)</th><th class="num">Mean train loss vs. LayerNorm</th></tr>
@@ -307,9 +322,9 @@ With 12% fewer steps to LayerNorm's final loss, BW now takes about 1.45&times; L
 <table>
 <tr><th>Configuration</th><th class="num">Seeds</th><th class="num">ms / iter</th><th class="num">Mean train loss</th><th class="num">Final train loss</th>
 <th class="num">Steps to loss 0.5</th><th class="num">Steps to loss 0.3</th><th class="num">Best val</th></tr>
-<tr><td>LayerNorm, lr 1e-3</td><td class=num>2</td><td class=num>14.0</td><td class="num">0.672 <span class="rng">0.670&ndash;0.673</span></td><td class="num">0.2129 <span class="rng">0.2111&ndash;0.2147</span></td><td class="num">5567 <span class="rng">5547&ndash;5587</span></td><td class="num">7659 <span class="rng">7598&ndash;7719</span></td><td class="num">1.464 <span class="rng">1.458&ndash;1.469</span></td></tr>
-<tr><td>LayerNorm, lr 2e-3</td><td class=num>1</td><td class=num>14.0</td><td class="num">0.685 (+2%) <span class="rng">0.685&ndash;0.685</span></td><td class="num better">0.2127 (&minus;0%) <span class="rng">0.2127&ndash;0.2127</span></td><td class="num">5783 (+4%) <span class="rng">5783&ndash;5783</span></td><td class="num">7703 (+1%) <span class="rng">7703&ndash;7703</span></td><td class="num">1.451 (&minus;1%) <span class="rng">1.451&ndash;1.451</span></td></tr>
-<tr><td><b>BW, momentum 0.3, ff 0.4, lr 2e-3</b></td><td class=num>2</td><td class=num>23.1</td><td class="num better">0.642 (&minus;4%) <span class="rng">0.639&ndash;0.645</span></td><td class="num better">0.1745 (&minus;18%) <span class="rng">0.1727&ndash;0.1763</span></td><td class="num better">5384 (&minus;3%) <span class="rng">5356&ndash;5413</span></td><td class="num better">7036 (&minus;8%) <span class="rng">7009&ndash;7064</span></td><td class="num">1.467 (+0%) <span class="rng">1.467&ndash;1.468</span></td></tr>
+<tr><td>LayerNorm, lr 1e-3</td><td class=num>2</td><td class=num>13.9</td><td class="num">0.672 <span class="rng">0.670&ndash;0.673</span></td><td class="num">0.2129 <span class="rng">0.2111&ndash;0.2147</span></td><td class="num">5567 <span class="rng">5547&ndash;5587</span></td><td class="num">7659 <span class="rng">7598&ndash;7719</span></td><td class="num">1.464 <span class="rng">1.458&ndash;1.469</span></td></tr>
+<tr><td>LayerNorm, lr 2e-3</td><td class=num>1</td><td class=num>13.9</td><td class="num">0.685 (+2%) <span class="rng">0.685&ndash;0.685</span></td><td class="num better">0.2127 (&minus;0%) <span class="rng">0.2127&ndash;0.2127</span></td><td class="num">5783 (+4%) <span class="rng">5783&ndash;5783</span></td><td class="num">7703 (+1%) <span class="rng">7703&ndash;7703</span></td><td class="num">1.451 (&minus;1%) <span class="rng">1.451&ndash;1.451</span></td></tr>
+<tr><td><b>BW, momentum 0.3, ff 0.4, lr 2e-3</b></td><td class=num>2</td><td class=num>15.7</td><td class="num better">0.642 (&minus;4%) <span class="rng">0.639&ndash;0.645</span></td><td class="num better">0.1745 (&minus;18%) <span class="rng">0.1727&ndash;0.1763</span></td><td class="num better">5384 (&minus;3%) <span class="rng">5356&ndash;5413</span></td><td class="num better">7036 (&minus;8%) <span class="rng">7009&ndash;7064</span></td><td class="num">1.467 (+0%) <span class="rng">1.467&ndash;1.468</span></td></tr>
 </table>
 <table>
 <tr><th class="num">Step</th><th class="num">LayerNorm train loss</th><th class="num">BW train loss</th><th class="num">BW vs. LayerNorm</th></tr>
@@ -357,7 +372,7 @@ With 12% fewer steps to LayerNorm's final loss, BW now takes about 1.45&times; L
 </svg>
 <p class="figcap"><b>Figure 3:</b> Learning curves, dropout 0.2, 10k steps. Eval-mode train loss (solid; dropout off during eval) and validation loss (dashed), mean over seeds.
 The gap opens in the second half, as the learning rate decays, and settles at about &minus;18%; LayerNorm at lr 2e-3 tracks LayerNorm at 1e-3.
-BW (best) reaches LayerNorm's final train loss (0.213) at step 8417, 16% fewer steps (1.19&times; faster per step; at 1.65&times; the cost per step, about 1.39&times; LayerNorm's wall-clock time).</p>
+BW (best) reaches LayerNorm's final train loss (0.213) at step 8417, 16% fewer steps (1.19&times; faster per step; at 1.13&times; the cost per step, about 0.95&times; LayerNorm's wall-clock time).</p>
 <ul class="summary">
   <li><b>The longer run doubles the final gain:</b> &minus;18% final train loss on both seeds (0.175 against 0.213), against &minus;10% at 5k. Loss 0.3 is reached about 600 steps sooner.</li>
   <li><b>Most of the gain comes while the learning rate decays.</b> The gap is &minus;1 to &minus;2% for the first 4000 steps, then grows to &minus;17% by step 8000 and holds. The absolute gap peaks around step 7000&ndash;8000 (0.047) and shrinks slightly by 10k (0.038), so an even longer run is unlikely to widen the relative gain much.</li>

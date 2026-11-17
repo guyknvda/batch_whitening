@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ns_chol: Newton&ndash;Schulz forward, Cholesky backward</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg-alt: #f6f8fa;
+    --ok: #1a7f37; --diff: #9a6700; --gap: #cf222e; --new: #0969da;
+  }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--fg);
+         max-width: 1180px; margin: 32px auto; padding: 0 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 14px; margin: 20px 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  ul.summary { padding-left: 20px; margin: 8px 0; }
+  ul.summary li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 4px; font-size: 13px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-alt); font-weight: 600; }
+  td.f { font-weight: 600; width: 17%; }
+  td.s { width: 92px; white-space: nowrap; }
+  td.n { color: var(--muted); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chip { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 600;
+          border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .diff { color: var(--diff); } .gap { color: var(--gap); } .new { color: var(--new); }
+  .legend span { margin-right: 14px; }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg-alt);
+         padding: 1px 4px; border-radius: 4px; }
+  td.better { color: var(--ok); font-weight: 700; }
+  td.bad { color: var(--gap); }
+  tr.baseline td { background: var(--bg-alt); }
+  .cap { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+  .legend-line { font-size: 12px; margin: 4px 0; }
+  .legend-line span { margin-right: 16px; white-space: nowrap; }
+  .rng { color: var(--muted); font-size: 11px; }
+  details { margin: 16px 0; } summary { cursor: pointer; font-weight: 600; }
+  .legend-line i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+  .todo { border: 1px solid var(--new); border-left-width: 4px; background: #ddf4ff; border-radius: 6px;
+          padding: 10px 14px; margin: 0 0 20px; }
+  .todo ul { margin: 6px 0 0; padding-left: 20px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 28px; }
+  .leak { border: 2px solid var(--gap); border-left-width: 6px; background: #ffebe9; border-radius: 6px;
+          padding: 12px 16px; margin: 0 0 20px; }
+  .leak h2 { color: var(--gap); border: 0; margin: 0 0 6px; padding: 0; }
+  .leak ol, .leak ul { margin: 6px 0; padding-left: 22px; } .leak li { margin: 4px 0; }
+  .leak table { background: #fff; }
+</style>
+</head>
+<body>
+<h1>ns_chol: Newton&ndash;Schulz forward, Cholesky backward</h1>
+<p class="sub">Causal BW (renorm, shared statistics) on nanoGPT shakespeare_char, the best recipe of
+<a href="bw_nanogpt_study.html">bw_nanogpt_study.html</a>: B&nbsp;=&nbsp;64, T&nbsp;=&nbsp;256, 6 layers, C&nbsp;=&nbsp;384,
+dropout 0, lr 1.5e-3, 5000 steps, one H100.</p>
+
+<div class="todo"><b>Summary.</b>
+<ul>
+  <li>BW can whiten with <b>Cholesky</b> (cheap) or with <b>Newton&ndash;Schulz</b> (symmetric, ZCA whitening: lower loss, but 21.6 instead of 15.7 ms / step).
+  <b>ns_chol uses each where it is cheap</b>, and gets Newton&ndash;Schulz's loss at Cholesky's step time.</li>
+  <li><b>The gain is in steps, not step time:</b> an ns_chol step costs the same as a Cholesky step (15.77 against 15.72 ms; both slower than LayerNorm's 13.94),
+  but reaches a given loss in fewer steps (4214 against 4438 to LayerNorm's final loss).</li>
+  <li>With the same hyperparameters for both, BW with ns_chol reaches LayerNorm's final train loss in 4214 instead of 5000 steps:
+  <b>&minus;4.7% wall-clock time</b> against LayerNorm, compared with +0.1% for Cholesky (mean of 3 seeds).</li>
+  <li>ns_chol is now the default (<code>bw_whiten="ns_chol"</code>, <code>bw_ns_iters=10</code> in <code>train.py</code>);
+  <code>--bw_whiten=cholesky</code> or <code>--bw_whiten=ns</code> switch back. It needs renorm with batch statistics; without them BW uses Cholesky.</li>
+</ul></div>
+
+<h2>How it works</h2>
+<p><b>The layer.</b> Each MLP input is normalized by one BW layer that now also does the needed part of LayerNorm. Before, it was BW followed by
+a separate LayerNorm with its own gain and bias. Now BW is followed by a LayerNorm without gain or bias, applied inside the same fused BW
+function (native LayerNorm kernels, forward and backward), with no separate LayerNorm module. The per-token normalization is what is needed after BW;
+its gain and bias are redundant with BW's own &gamma; and &beta;, and dropping them does not change the loss
+(<a href="bw_nanogpt_study.html">bw_nanogpt_study.html</a>, &ldquo;Do we need the LayerNorm after BW?&rdquo;). All BW runs below use this layer.</p>
+<ul class="summary">
+  <li><b>Forward: Newton&ndash;Schulz.</b> The whitening matrix applied to the activations is the symmetric one,
+  A<sup>&minus;1/2</sup> of the running covariance, from 10 Newton&ndash;Schulz iterations. With renorm the forward only needs the matrix
+  from the previous step, so Newton&ndash;Schulz is never computed inside the forward pass: it computes next step's matrix,
+  in parallel with the backward pass (below), and costs almost no time.</li>
+  <li><b>Backward: Cholesky.</b> The gradient is the closed-form Cholesky backward, with this batch's Cholesky factor L.
+  This avoids backpropagating through the 10 Newton&ndash;Schulz iterations, which is what makes plain Newton&ndash;Schulz slow.</li>
+  <li><b>Why the two fit together:</b> a symmetric whitening matrix and the Cholesky one differ only by a rotation,
+  A<sup>&minus;1/2</sup> = Q L<sup>&minus;1</sup> with Q orthogonal. With Q held constant, the gradient through the symmetric matrix
+  is exactly the Cholesky gradient. The only approximation is that the gradient ignores how Q changes with the covariance.</li>
+</ul>
+
+<h3>What runs when (one BW layer, training step t)</h3>
+<ol>
+  <li><b>Forward, main stream:</b> Y = &gamma; W<sub>R</sub>(x &minus; &mu;<sub>R</sub>) + &beta;, one matrix product. W<sub>R</sub> was computed during step t&minus;1;
+  no covariance, Cholesky or Newton&ndash;Schulz here, so the next layer starts right away.</li>
+  <li><b>Side CUDA stream, overlapping the later layers' forward:</b> this batch's statistics (X<sup>T</sup>X and the mean),
+  the running-covariance update and its Cholesky factor. Only the backward and the next step need them.</li>
+  <li><b>Backward:</b> the main stream computes the gradient with the Cholesky formula. At the same time the side stream runs the
+  10 Newton&ndash;Schulz iterations on the updated covariance, producing next step's W<sub>R</sub>, overlapped with the backward of this layer and the layers below.</li>
+  <li><b>Step t+1:</b> the forward uses that W<sub>R</sub>, long finished by then.</li>
+</ol>
+<p class="cap">"In parallel" means concurrently on the GPU, on a second CUDA stream, not across layers: the forward is still layer after layer,
+but each layer's extra work is not needed by anything later in the same forward. The placement matters: running Newton&ndash;Schulz on
+the side stream during the forward made the side stream fall behind, so the backward waited for the last layers' Cholesky factors (16.98 ms / step instead of 15.77).</p>
+
+<h2>Result: against LayerNorm, same hyperparameters</h2>
+<table>
+<tr><th>Whitening</th><th class="num">ms / step</th><th class="num">Mean train loss vs LayerNorm</th>
+<th class="num">Steps to LayerNorm's final loss (0.0828)</th><th class="num">Time to that loss</th><th class="num">Seeds</th></tr>
+<tr class="baseline"><td>LayerNorm</td><td class=num>13.94</td><td class=num>0%</td><td class=num>5000</td><td class=num>69.7 s</td><td class=num>1</td></tr>
+<tr><td>Cholesky (previous default)</td><td class=num>15.72</td><td class=num>&minus;14.6% <span class="rng">(&minus;16.0%, &minus;11.7%, &minus;16.0%)</span></td><td class=num>4438 <span class="rng">(4338, 4636, 4338)</span></td><td class=num>69.8 s (+0.1%)</td><td class=num>3</td></tr>
+<tr><td>Newton&ndash;Schulz, 10 iterations</td><td class=num>21.55</td><td class=num>&minus;17.1% <span class="rng">(&minus;17.9%, &minus;16.1%, &minus;17.3%)</span></td><td class=num>4232 <span class="rng">(4203, 4231, 4263)</span></td><td class=num>91.2 s (+30.9%)</td><td class=num>3</td></tr>
+<tr><td><b>ns_chol</b>, 10 iterations</td><td class=num>15.77</td><td class=num>&minus;17.2% <span class="rng">(&minus;18.9%, &minus;15.7%, &minus;17.0%)</span></td><td class=num>4214 <span class="rng">(4200, 4250, 4193)</span></td><td class="num better">66.5 s (&minus;4.7%)</td><td class=num>3</td></tr>
+</table>
+<p class="cap">Mean over seeds, per-seed values in parentheses. Time = steps &times; ms / step, training steps only;
+step times are synchronized 100-step blocks (<code>nlp/nano_gpt/profile_step.py</code>). Everything except the whitening is identical.</p>
+<ul class="summary">
+  <li><b>Loss:</b> ns_chol matches Newton&ndash;Schulz (4214 against 4232 steps) and beats Cholesky (4438 steps).</li>
+  <li><b>Step time:</b> ns_chol costs the same as Cholesky (15.77 against 15.72 ms).</li>
+</ul>
+
+<h2>Tried, did not help</h2>
+<ul class="summary">
+  <li><b>Fewer iterations:</b> 7 Newton&ndash;Schulz iterations lose most of the gain, 3 or 5 diverge. 10 are needed.</li>
+  <li><b>BW in layers 0, 2, 4 only</b> (14.8 ms / step): fewer BW layers lose quality, so about the same wall-clock time as all 6 layers.</li>
+  <li><b>Newton&ndash;Schulz replayed from a CUDA graph:</b> same values, but much slower (26&ndash;38 ms / step) next to the side stream.</li>
+</ul>
+
+<p class="foot">Code: <code>bw_whiten="ns_chol"</code> in <code>renorm_fast_whiten</code>, <code>nlp/nano_gpt/model.py</code>.
+Check: <code>nlp/nano_gpt/check_ns_chol.py</code> (given the same previous matrix, output and gradients are identical to Cholesky;
+the deferred side-stream path matches the eager one exactly). Runs: <code>nlp/study/pack27.txt</code>&ndash;<code>pack30.txt</code>.
+Generated by <code>nlp/docs/make_ns_chol_doc.py</code>.</p>
+</body>
+</html>

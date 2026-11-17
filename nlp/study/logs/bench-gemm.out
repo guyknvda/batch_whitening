@@ -1,0 +1,23 @@
+   36.6 us  X @ W (row-major W)
+   28.2 us  X @ W (column-major W)
+   43.5 us  addmm(b, X, W) row-major W
+   28.3 us  addmm(b, X, W) column-major W
+   55.6 us  mm(X, W, out=) then add_(b)
+   46.2 us  out.addmm_(X, W) (accumulate)
+   36.3 us  out.addmm_(X, W) column-major W
+   43.0 us  X^T X (Gram, X row-major)
+   30.0 us  Xt @ Xt^T (Gram, X stored transposed)
+   43.4 us  g^T X
+   58.6 us  gt @ X (g stored transposed)
+  171.1 us  [g X]^T [g X] one product, 768 wide
+   47.5 us  bf16 X @ W
+   24.1 us  X.sum(0)
+   11.6 us  torch.mv(X^T, ones)
+   11.4 us  ones @ X (1 x N product)
+   24.1 us  X.view(64, 256, C).sum((0, 1))
+   14.7 us  X.view(256, 64, C).sum(1).sum(0)
+   31.6 us  compiled X.sum(0)
+   39.1 us  (cat alone)
+ideal at 400 TFLOP/s: 12.1 us per product
+name, clocks.max.sm [MHz]
+NVIDIA H100 80GB HBM3, 1980 MHz

@@ -76,26 +76,28 @@ def fix_cov(covmat, fix_factor=0.9):
     - Off-diagonal entries scaled by fix_factor
     Supports 2D [D,D] or 3D [B,D,D] or 4D [B,n_groups,D,D]
     """
-    a = torch.ones_like(covmat) * fix_factor
-
-    if covmat.dim() == 2:
-        # 2D covariance
-        a.fill_diagonal_(1.0)
-    elif covmat.dim() == 3:
-        # 3D: [B,D,D]
-        eye = torch.eye(covmat.size(-1), device=covmat.device)
-        a = a * (1 - eye) + eye
-    elif covmat.dim() == 4:
-        # 4D: [B,n_groups,D,D]
-        eye = torch.eye(
-            covmat.size(-1),
-            device=covmat.device,
-        ).view(1, 1, covmat.size(-1), covmat.size(-1))
-        a = a * (1 - eye) + eye
-    else:
+    if covmat.dim() not in (2, 3, 4):
         raise ValueError(f"Unsupported covmat.dim()={covmat.dim()}")
-
+    D = covmat.size(-1)
+    key = (D, float(fix_factor), covmat.device, covmat.dtype)
+    a = _FIX_MASKS.get(key)
+    if a is None:
+        a = torch.full((D, D), float(fix_factor), device=covmat.device, dtype=covmat.dtype)
+        a.fill_diagonal_(1.0)
+        _FIX_MASKS[key] = a
     return a * covmat
+
+
+_FIX_MASKS = {}
+_EYES = {}
+
+
+def _eye(D, device, dtype):
+    """Cached identity (read-only)."""
+    key = (D, device, dtype)
+    if key not in _EYES:
+        _EYES[key] = torch.eye(D, device=device, dtype=dtype)
+    return _EYES[key]
 
 
 def shrink_cov(covmat, fix_factor, target="diag"):
@@ -280,10 +282,392 @@ class _RenormWhitenFn(torch.autograd.Function):
         return dXc - dXc.mean(dim=(0, 1), keepdim=True), None, None, None, None, None, None, None, None
 
 
+NS_COLD_ITERS = 15
+
+
+def ns_whiten(A, iters, scale=True):
+    """Coupled Newton-Schulz: (W, S) ~ (A^-1/2, A^1/2), symmetric (ZCA) whitening.
+
+    A is scaled by its Frobenius norm so every eigenvalue lies in (0, 1]. An
+    eigenvalue x of the scaled matrix gains about 1.5x per iteration on the way
+    to x^-1/2, so a few iterations whiten the large directions and leave the
+    small ones under-amplified. S = A W exactly at any iteration count.
+    scale=False for A near I (eigenvalues must stay below 3).
+    """
+    G = A.size(-1)
+    eye = torch.eye(G, device=A.device, dtype=A.dtype)
+    nrm = torch.linalg.matrix_norm(A, keepdim=True) if scale else torch.ones_like(A[..., :1, :1])
+    Y = A / nrm
+    Z = 1.5 * eye - 0.5 * Y
+    Y = Y @ Z
+    for _ in range(iters - 1):
+        Tm = 1.5 * eye - 0.5 * (Z @ Y)
+        Y = Y @ Tm
+        Z = Tm @ Z
+    return Z / nrm.sqrt(), Y * nrm.sqrt()
+
+
+def ns_inv_sqrt(A, iters):
+    """ns_whiten(A, iters)[0] for one (G, G) matrix in fewer launches: T = 1.5I - 0.5 ZY
+    in one addmm, and no Y update in the last iteration (only Z is returned)."""
+    eye = _eye(A.size(-1), A.device, A.dtype)
+    nrm = torch.linalg.matrix_norm(A)
+    Y = A / nrm
+    Z = torch.add(1.5 * eye, Y, alpha=-0.5)
+    Y = Y @ Z
+    eye15 = 1.5 * eye
+    for k in range(iters - 1):
+        Tm = torch.addmm(eye15, Z, Y, alpha=-0.5)
+        if k < iters - 2:
+            Y = Y @ Tm
+        Z = Tm @ Z
+    return Z * nrm.rsqrt()
+
+
+def whiten_matrix(A, whiten="cholesky", ns_iters=5, init=None):
+    """(W, W^-1) with W A W^T ~ I: (L^-1, L) for cholesky, (A^-1/2, A^1/2) for ns.
+
+    ns_warm starts from a whitening matrix P of a nearby covariance, init = (P, c):
+    W = (P A P^T)^-1/2 P, with P A P^T ~ I so few iterations converge. c, about
+    the largest eigenvalue of P A P^T, keeps the iteration inside its
+    convergence region (eigenvalues below 3), which early training, with the
+    covariance changing fast, leaves otherwise. W whitens A but is symmetric
+    (ZCA) only if P commutes with A; chained over steps it drifts by a rotation.
+    """
+    if whiten == "cholesky":
+        L = torch.linalg.cholesky_ex(A)[0]  # no error check: no device synchronization
+        eye = _eye(A.size(-1), A.device, A.dtype)
+        return torch.linalg.solve_triangular(L, eye if L.dim() == 2 else eye.expand_as(L), upper=False), L
+    if whiten in ("ns", "ns_chol"):
+        return ns_whiten(A, ns_iters)
+    if whiten == "ns_warm":
+        P, c = init
+        Z, _ = ns_whiten(P @ A @ P.transpose(-1, -2) / c, ns_iters, scale=False)
+        W = Z @ P / c.sqrt()
+        return W, A @ W.transpose(-1, -2)
+    raise ValueError(f"Unknown whiten: {whiten}")
+
+
+class _RenormWhitenAutoFn(torch.autograd.Function):
+    """Same as _RenormWhitenFn for any whitening map W = f(shrink(cov_w)): the
+    activation-sized part of the backward is written out, the (G, G) part
+    through W, the shrinkage and f runs through autograd on the small matrices.
+    """
+
+    @staticmethod
+    def forward(ctx, Xg, Xc, mu_R, W_R, R, M, cov_w, cov_scale, fix_factor, shrink_target, whiten, ns_iters,
+                init):
+        ctx.save_for_backward(Xc, R, M, cov_w)
+        ctx.args = cov_scale, fix_factor, shrink_target, whiten, ns_iters
+        ctx.init = init
+        return torch.einsum("gij,btgj->btgi", W_R[0], Xg - mu_R.unsqueeze(1))
+
+    @staticmethod
+    def backward(ctx, g):
+        Xc, R, M, cov_w = ctx.saved_tensors
+        cov_scale, ff, target, whiten, ns_iters = ctx.args
+        init = ctx.init
+        B, T, _, G = Xc.shape
+        dXc = torch.einsum("btgi,gij->btgj", g, M[0])
+        dM = torch.einsum("btgi,btgj->gij", g, Xc).unsqueeze(0)
+        with torch.enable_grad():
+            A = cov_w.detach().requires_grad_()
+            W = whiten_matrix(shrink_cov(A, ff, target), whiten, ns_iters, init)[0]
+            dA, = torch.autograd.grad(W, A, R.transpose(-1, -2) @ dM)
+        dcov = cov_scale * 0.5 * (dA + dA.transpose(-1, -2))
+        dXc = dXc + torch.einsum("btgc,gcd->btgd", Xc, (2.0 / (B * T)) * dcov[0])
+        return (dXc - dXc.mean(dim=(0, 1), keepdim=True),) + (None,) * 12
+
+
+def _whiten_cov_grad(dM, R, L, W, cov_w, ff, target, whiten, ns_iters, init):
+    """Gradient w.r.t. cov_w (symmetric) of <dM, R W(shrink(cov_w))> for one
+    group of (G, G) matrices; L = W^-1 (the Cholesky factor for cholesky)."""
+    dW = R.transpose(-1, -2) @ dM
+    if whiten != "cholesky":
+        with torch.enable_grad():
+            A = cov_w.detach().requires_grad_()
+            dA, = torch.autograd.grad(whiten_matrix(shrink_cov(A, ff, target), whiten, ns_iters, init)[0], A, dW)
+        return 0.5 * (dA + dA.transpose(-1, -2))
+    # W = L^-1, L = chol(A) (Murray 2016), then through the shrinkage.
+    G = W.size(-1)
+    Wt = W.transpose(-1, -2)
+    P = torch.tril(L.transpose(-1, -2) @ (-Wt @ dW @ Wt))
+    P = P - 0.5 * torch.diag_embed(P.diagonal(dim1=-2, dim2=-1))
+    dA = Wt @ P @ W
+    dA = 0.5 * (dA + dA.transpose(-1, -2))
+    diag = torch.diag_embed(dA.diagonal(dim1=-2, dim2=-1))
+    if target == "diag":
+        return ff * dA + (1 - ff) * diag
+    eye = torch.eye(G, device=dA.device, dtype=dA.dtype)
+    return ff * dA + (1 - ff) * diag.sum((-2, -1), keepdim=True) / G * eye
+
+
+class _RenormWhitenFast(torch.autograd.Function):
+    """One group (G = C), tokens flattened to X (N, G); BW's gain and bias folded in.
+
+    Forward: Y = gamma * W_R (x - mu_R) + beta = X Wg + bias, one matrix product.
+    Backward: the gradient of gamma * (R W_B (x - mu_B)) + beta (R constant), as
+    in _RenormWhitenFn, but centering, the token-mean subtraction and the
+    gain/bias gradients are folded into the small matrices, so the activations
+    see three matrix products (g^T X, g Mg, X K) and one reduction. R W_B = W_R,
+    so the data term is g (gamma W_R) = g Mg.
+    post_eps not None: the output is followed by a LayerNorm without gain or
+    bias (eps post_eps), applied here with the native kernels.
+    """
+
+    @staticmethod
+    def forward(ctx, X, gamma, beta, Wg, bias, Mg, mu_B, mu_R, W_R, R, L_B, W_B, cov_w, cov_scale, ff, target,
+                whiten, ns_iters, init, event, post_eps=None, ns_job=None):
+        ctx.args = cov_scale, ff, target, whiten, ns_iters, post_eps
+        ctx.init, ctx.event, ctx.ns_job = init, event, ns_job
+        Y = torch.addmm(bias, X, Wg)
+        saved = (X, gamma, Mg, mu_B, mu_R, W_R, R, L_B, W_B, cov_w)
+        if post_eps is None:
+            ctx.save_for_backward(*saved)
+            return Y
+        Z, mean, rstd = torch.native_layer_norm(Y, [Y.size(1)], None, None, post_eps)
+        ctx.save_for_backward(*saved, Y, mean, rstd)
+        return Z
+
+    @staticmethod
+    def backward(ctx, g):
+        X, gamma, Mg, mu_B, mu_R, W_R, R, L_B, W_B, cov_w = ctx.saved_tensors[:10]
+        cov_scale, ff, target, whiten, ns_iters, post_eps = ctx.args
+        N = X.size(0)
+        job = ctx.ns_job
+        if job is not None:  # next step's W_R, on the side stream, overlapping this backward
+            main, side = torch.cuda.current_stream(), _side_stream(g.device)
+            with torch.cuda.stream(side):
+                W = ns_inv_sqrt(job["A"], job["iters"])
+                job["event"].record(side)
+            W.record_stream(main)
+            job["W"] = W
+        if post_eps is not None:
+            Y, mean, rstd = ctx.saved_tensors[10:]
+            g = torch.ops.aten.native_layer_norm_backward(g, Y, [Y.size(1)], mean, rstd, None, None,
+                                                          [True, False, False])[0]
+        gs = _colsum(g)
+        GX = g.transpose(0, 1) @ X  # sum_t g_i x_j
+        if ctx.event is not None:  # the side stream's matrices are first needed here
+            torch.cuda.current_stream().wait_event(ctx.event)
+        if whiten == "cholesky":
+            dgamma, K, bias = _glue(_fast_bwd_small, g.is_cuda)(
+                GX, gs, gamma, Mg, mu_R, mu_B, W_R, R, W_B, N, float(cov_scale), float(ff), target == "diag")
+        else:
+            dgamma = (W_R * (GX - gs[:, None] * mu_R[None, :])).sum(1)
+            dM = gamma[:, None] * (GX - gs[:, None] * mu_B[None, :])
+            K = (2.0 / N) * cov_scale * _whiten_cov_grad(dM, R, L_B, W_B, cov_w, ff, target, whiten, ns_iters,
+                                                         ctx.init)
+            bias = -(gs / N) @ Mg - mu_B @ K
+            K = _colmajor(K)
+        dX = torch.addmm(bias, g, Mg)
+        dX.addmm_(X, K)
+        return (dX, dgamma, gs) + (None,) * 19
+
+
+_SIDE_STREAMS = {}
+
+
+def _side_stream(device):
+    if device not in _SIDE_STREAMS:
+        # High priority: its small, latency-bound kernels gate the backward pass
+        # and would otherwise queue behind the large activation kernels.
+        _SIDE_STREAMS[device] = torch.cuda.Stream(device, priority=-1)
+    return _SIDE_STREAMS[device]
+
+
+def _fast_stats(S, s, cov_R, mu_R, N: int, eps: float, m: float, loo: bool):
+    """Batch mean and covariance from X^T X and the column sums, the whitening
+    covariance, and the new buffer values."""
+    mu_B = s / N
+    eye = torch.eye(S.size(0), device=S.device, dtype=S.dtype)
+    cov = S / N - torch.outer(mu_B, mu_B) + eps * eye
+    if loo:
+        return mu_B, cov, cov, mu_B
+    return mu_B, cov, (1 - m) * cov_R + m * cov, (1 - m) * mu_R + m * mu_B
+
+
+def _colmajor(A):
+    """A with column-major strides: as the right operand of an (N, G) x (G, G)
+    product, cuBLAS picks a faster kernel for it on the H100 (~30 vs ~43 us)."""
+    return A.transpose(0, 1).contiguous().transpose(0, 1)
+
+
+_ONES = {}
+
+
+def _colsum(A):
+    """A.sum(0) for A (N, G) as a matrix-vector product (no tensor cores, so
+    full fp32): about twice as fast as the reduction kernel on the H100."""
+    key = (A.size(0), A.device, A.dtype)
+    if key not in _ONES:
+        _ONES[key] = torch.ones(A.size(0), device=A.device, dtype=A.dtype)
+    return torch.mv(A.transpose(0, 1), _ONES[key])
+
+
+def _fast_bwd_small(GX, gs, gamma, Mg, mu_R, mu_B, W_R, R, W, N: int, cov_scale: float, ff: float,
+                    diag_target: bool):
+    """Cholesky case of _RenormWhitenFast.backward on the (G, G) matrices.
+
+    With W = L^-1 and R = W_R L: the gradient at L, L^T (-W^T R^T dM W^T), is
+    -R^T dM W^T (W^T R^T = W_R^T, L^T W_R^T = R^T), two products instead of four.
+    """
+    dgamma = (W_R * (GX - gs[:, None] * mu_R[None, :])).sum(1)
+    dM = gamma[:, None] * (GX - gs[:, None] * mu_B[None, :])
+    G = W.size(-1)
+    P = torch.tril(-(R.transpose(0, 1) @ dM) @ W.transpose(0, 1))
+    P = P - 0.5 * torch.diag_embed(P.diagonal())
+    dA = W.transpose(0, 1) @ P @ W
+    dA = 0.5 * (dA + dA.transpose(0, 1))
+    diag = torch.diag_embed(dA.diagonal())
+    if diag_target:
+        dA = ff * dA + (1 - ff) * diag
+    else:
+        dA = ff * dA + (1 - ff) * diag.sum() / G * torch.eye(G, device=dA.device, dtype=dA.dtype)
+    K = (2.0 / N) * cov_scale * dA
+    # K is symmetric, so its transpose is the column-major copy
+    return dgamma, K.transpose(0, 1), -(gs / N) @ Mg - mu_B @ K
+
+
+_COMPILED = {}
+
+
+def _glue(fn, cuda):
+    """fn compiled (its elementwise ops fused into a few kernels) on CUDA."""
+    if not cuda or not COMPILE_GLUE:
+        return fn
+    if fn not in _COMPILED:
+        _COMPILED[fn] = torch.compile(fn, dynamic=False)
+    return _COMPILED[fn]
+
+
+COMPILE_GLUE = True
+
+
+def renorm_fast_whiten(X, gamma, beta, running_mean, running_cov, eps, momentum, fix_factor, center_mode,
+                       update_running_stats, update_running_cov_stats, cache, shrink_target,
+                       whiten="cholesky", ns_iters=5, ns_refresh=0, side_stream=False, post_eps=None):
+    """Training forward of BW with renorm, shared statistics, one group, the fused
+    backward and no warmup or boost: same value and gradient as
+    batch_orthonorm(...) * gamma + beta, with fewer passes over the activations.
+    X: (B, T, C). Returns Y (B, T, C) and updates the buffers and cache in place.
+    post_eps not None: Y is followed by F.layer_norm(Y, (C,), eps=post_eps), done here.
+    """
+    B, T, G = X.shape
+    N = B * T
+    X2 = X.reshape(N, G)
+    cuda = X.is_cuda
+    loo = center_mode == "leave_one_out"
+    cov_R = running_cov.detach().reshape(G, G)
+    main = torch.cuda.current_stream() if cuda else None
+    side = _side_stream(X.device) if side_stream and cuda else None
+    with torch.no_grad():
+        if cache is not None and "event" in cache:  # last step's buffer updates and W_B
+            main.wait_event(cache["event"])
+        if cache is not None and "ns_job" in cache:  # ns_chol: W_B of last step, from its backward
+            job = cache.pop("ns_job")
+            if job["W"] is None:  # no backward ran
+                job["W"] = ns_inv_sqrt(job["A"], job["iters"])
+            else:
+                main.wait_event(job["event"])
+            cache["W"] = job["W"]
+        mu_R = running_mean.detach().reshape(G).clone()  # running_mean is overwritten below
+        key = (running_cov.data_ptr(), running_cov._version)
+        if cache is not None and cache.get("key") == key:
+            W_R = cache["W"].reshape(G, G)
+        elif whiten == "ns_warm":
+            W_R = ns_whiten(shrink_cov(cov_R, fix_factor, shrink_target), NS_COLD_ITERS)[0]
+        else:
+            W_R = whiten_matrix(shrink_cov(cov_R, fix_factor, shrink_target), whiten, ns_iters)[0]
+        # The forward value needs only W_R: Y = X Wg + bias. Wg (column-major,
+        # the faster layout for cuBLAS) and Mg are views of one matrix.
+        Mg_rm = gamma.detach()[:, None] * W_R
+        Wg, Mg = Mg_rm.transpose(0, 1), _colmajor(Mg_rm)
+        bias = torch.addmv(beta.detach(), Mg_rm, mu_R, alpha=-1)
+        step = cache.get("step", 0) if cache is not None else 0
+        # The batch statistics, the buffer updates and the batch whitening
+        # matrix are first needed in the backward pass (and next step), so they
+        # run on a side stream while the forward pass continues.
+        if side is not None:
+            side.wait_stream(main)
+            for t in (X2, mu_R, W_R):
+                t.record_stream(side)
+        with torch.cuda.stream(side) if side is not None else contextlib.nullcontext():
+            mu_B, cov, cov_w, mu_new = _glue(_fast_stats, cuda)(
+                X2.transpose(0, 1) @ X2, _colsum(X2), cov_R, mu_R, N, float(eps), float(momentum), loo)
+            cov_scale = 1.0 if loo else momentum
+            A_B = shrink_cov(cov_w, fix_factor, shrink_target)
+            spec, v = (whiten, ns_iters, None), None
+            if whiten == "ns_warm":
+                if ns_refresh and step % ns_refresh == 0:
+                    spec = ("ns", NS_COLD_ITERS, None)
+                else:
+                    Ap = W_R @ A_B @ W_R.transpose(0, 1)
+                    v = cache.get("v") if cache is not None else None
+                    v = torch.ones_like(Ap[:, :1]) if v is None else v.reshape(G, 1)
+                    for _ in range(2):
+                        v = Ap @ v
+                        v = v / torch.linalg.vector_norm(v)
+                    c = 1.25 * (v.transpose(0, 1) @ Ap @ v)
+                    spec = (whiten, ns_iters, (W_R, c))
+            if whiten == "ns_chol":
+                spec = ("cholesky", ns_iters, None)
+            W_B, L_B = whiten_matrix(A_B, *spec)
+            R = W_R @ L_B
+            if loo or update_running_stats:
+                running_mean.copy_(mu_new.view_as(running_mean))
+            if loo or update_running_cov_stats:
+                running_cov.copy_(cov_w.view_as(running_cov))
+            # ns_chol: the forward (next step's W_R) whitens symmetrically,
+            # W_next = A_B^-1/2 = Q L_B^-1 with Q orthogonal; the backward is the
+            # Cholesky one (R = W_R L_B), i.e. the ZCA gradient with Q held constant.
+            # With a side stream W_next is computed in the backward (ns_job).
+            W_next, ns_job = W_B, None
+            if whiten == "ns_chol" and (loo or update_running_cov_stats):
+                if side is not None and cache is not None:
+                    W_next, ns_job = None, dict(A=A_B, iters=ns_iters, W=None, event=torch.cuda.Event())
+                else:
+                    W_next = ns_inv_sqrt(A_B, ns_iters)
+        event = None
+        if side is not None:
+            event = torch.cuda.Event()
+            event.record(side)
+            for t in (mu_B, cov_w, W_B, L_B, R, A_B) + ((v, spec[2][1]) if v is not None else ()):
+                t.record_stream(main)
+            if W_next is not None:
+                W_next.record_stream(main)
+            if cache is None:  # nothing would make the next reader of the buffers wait
+                main.wait_event(event)
+    Y = _RenormWhitenFast.apply(X2, gamma, beta, Wg, bias, Mg, mu_B, mu_R, W_R, R, L_B, W_B, cov_w, cov_scale,
+                                fix_factor, shrink_target, *spec, event, post_eps, ns_job)
+    if cache is not None:
+        new_key = (running_cov.data_ptr(), running_cov._version)
+        if loo or update_running_cov_stats:
+            if ns_job is not None:
+                cache.pop("W", None)
+                cache.update(key=new_key, ns_job=ns_job)
+            else:
+                cache.update(key=new_key, W=W_next.view_as(running_cov))
+            if event is not None:
+                cache["event"] = event
+            else:
+                cache.pop("event", None)
+        elif new_key == key:
+            cache.update(key=key, W=W_R.view_as(running_cov))
+        else:
+            cache.clear()
+        if whiten == "ns_warm":
+            cache["step"] = step + 1
+            if v is not None:
+                cache["v"] = v
+    return Y.view(B, T, G)
+
+
 def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_factor,
                          cov_warmup, center_mode, stat_grad_scale, warmup_ema_buffer,
                          update_running_stats, update_running_cov_stats,
-                         stat_grad="full", cache=None, shrink_target="diag", fused=False):
+                         stat_grad="full", cache=None, shrink_target="diag", fused=False,
+                         whiten="cholesky", ns_iters=5, ns_refresh=0):
     """renorm with whole-batch gradient statistics (renorm_stats="batch").
 
     The forward value is the whitening with the stored buffers, so the current
@@ -303,6 +687,11 @@ def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_facto
     reproduces cov_w bit for bit (running_mean and leave_one_out without
     boost), next step's W_R is this step's W_B, so its Cholesky and inverse are
     skipped.
+
+    whiten: "cholesky" (W = L^-1) or "ns" (W ~ A^-1/2 from ns_iters coupled
+    Newton-Schulz steps, matrix products only). "ns_warm" starts the iterations
+    from W_R; every ns_refresh-th step (0: never) it restarts cold with
+    NS_COLD_ITERS iterations, which resets the drift toward ZCA.
     """
     B, T, n_groups, G = Xg.shape
     eye = torch.eye(G, device=Xg.device, dtype=Xg.dtype).view(1, 1, G, G)
@@ -324,17 +713,41 @@ def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_facto
     if stat_grad != "full":
         cov_w = cov_w.detach()
 
-    L_B = torch.linalg.cholesky(shrink_cov(cov_w, fix_factor, shrink_target))
-    W_B = torch.linalg.solve_triangular(L_B, eye.expand_as(L_B), upper=False)
     key = (running_cov.data_ptr(), running_cov._version)
     with torch.no_grad():
         if cache is not None and cache.get("key") == key:
+            if "event" in cache:
+                torch.cuda.current_stream().wait_event(cache["event"])
             W_R = cache["W"]
+        elif whiten == "ns_warm":
+            W_R = ns_whiten(shrink_cov(cov_R, fix_factor, shrink_target), NS_COLD_ITERS)[0]
         else:
-            W_R = torch.linalg.solve_triangular(
-                torch.linalg.cholesky(shrink_cov(cov_R, fix_factor, shrink_target)),
-                eye.expand_as(cov_R), upper=False)
-    if fused:
+            W_R = whiten_matrix(shrink_cov(cov_R, fix_factor, shrink_target), whiten, ns_iters)[0]
+    spec = (whiten, ns_iters, None)
+    A_B = shrink_cov(cov_w, fix_factor, shrink_target)
+    if whiten == "ns_warm":
+        step = cache.get("step", 0) if cache is not None else 0
+        if ns_refresh and step % ns_refresh == 0:
+            spec = ("ns", NS_COLD_ITERS, None)
+        else:
+            with torch.no_grad():
+                Ap = W_R @ A_B @ W_R.transpose(-1, -2)
+                v = cache.get("v") if cache is not None else None
+                v = torch.ones_like(Ap[..., :1]) if v is None else v
+                for _ in range(2):
+                    v = Ap @ v
+                    v = v / torch.linalg.vector_norm(v, dim=-2, keepdim=True)
+                c = 1.25 * (v.transpose(-1, -2) @ Ap @ v)
+            spec = (whiten, ns_iters, (W_R, c))
+    if whiten == "ns_chol":  # Cholesky gradient; the next step's W_R is A_B^-1/2
+        spec = ("cholesky", ns_iters, None)
+    W_B, L_B = whiten_matrix(A_B, *spec)
+    if fused and spec[0] != "cholesky":
+        cov_scale = stat_grad_scale * (1.0 if center_mode == "leave_one_out" else momentum)
+        R = W_R @ L_B
+        Y = _RenormWhitenAutoFn.apply(Xg, Xc, mu_R, W_R, R, R @ W_B, cov_w.detach(), cov_scale,
+                                      fix_factor, shrink_target, *spec)
+    elif fused:
         cov_scale = stat_grad_scale * (1.0 if center_mode == "leave_one_out" else momentum)
         Y = _RenormWhitenFn.apply(Xg, Xc, mu_R, W_R, L_B, W_B, cov_scale, fix_factor, shrink_target)
     else:
@@ -363,11 +776,16 @@ def _renorm_batch_whiten(Xg, running_mean, running_cov, eps, momentum, fix_facto
         if cache is not None:
             new_key = (running_cov.data_ptr(), running_cov._version)
             if buffer_is_cov_w:
-                cache.update(key=new_key, W=W_B.detach())
+                cache.update(key=new_key, W=ns_whiten(A_B.detach(), ns_iters)[0] if whiten == "ns_chol" else W_B.detach())
+                cache.pop("event", None)
             elif new_key == key:
                 cache.update(key=key, W=W_R)
             else:
                 cache.clear()
+            if whiten == "ns_warm":
+                cache["step"] = step + 1
+                if spec[0] == "ns_warm":
+                    cache["v"] = v
     return Y.reshape(B, T, n_groups * G)
 
 
@@ -398,6 +816,9 @@ def batch_orthonorm(
     renorm_cache=None,
     shrink_target="diag",
     renorm_fused=False,
+    whiten="cholesky",
+    ns_iters=5,
+    ns_refresh=0,
 ):
     """
     Fully vectorized block whitening for X of shape (B, T, C).
@@ -503,6 +924,10 @@ def batch_orthonorm(
         raise ValueError("stat_grad other than 'full' needs renorm=True, renorm_stats='batch'")
     if shrink_target not in ("diag", "identity"):
         raise ValueError(f"Unknown shrink_target: {shrink_target}")
+    if whiten not in ("cholesky", "ns", "ns_warm", "ns_chol"):
+        raise ValueError(f"Unknown whiten: {whiten}")
+    if whiten != "cholesky" and training and not (renorm and renorm_stats == "batch"):
+        raise ValueError("whiten other than 'cholesky' needs renorm=True, renorm_stats='batch'")
     if renorm and renorm_stats == "batch":
         if center_mode not in ("leave_one_out", "running_mean", "calibrated"):
             raise ValueError("renorm_stats='batch' supports leave_one_out, running_mean and calibrated")
@@ -510,7 +935,8 @@ def batch_orthonorm(
             X.view(B, T, n_groups, group_size), running_mean, running_cov, eps,
             momentum, fix_factor, cov_warmup, center_mode, stat_grad_scale,
             warmup_ema_buffer, update_running_stats, update_running_cov_stats,
-            stat_grad=stat_grad, cache=renorm_cache, shrink_target=shrink_target, fused=renorm_fused)
+            stat_grad=stat_grad, cache=renorm_cache, shrink_target=shrink_target, fused=renorm_fused,
+            whiten=whiten, ns_iters=ns_iters, ns_refresh=ns_refresh)
         if gamma is not None:
             Y = Y * gamma.view(1, 1, -1)
         if beta is not None and bias:
@@ -727,8 +1153,22 @@ def batch_orthonorm(
     # --------------------------------------
     # 7. Cholesky whitening (batched)
     # --------------------------------------
-    L = torch.linalg.cholesky(uncorrelated_running_cov)  # (B or 1, n_groups, G, G)
     Xc_perm = Xc_self.permute(0, 2, 3, 1)  # -> (B, n_groups, G, T)
+    if whiten != "cholesky":
+        if (whiten == "ns_warm" and renorm_cache is not None
+                and renorm_cache.get("key") == (running_cov.data_ptr(), running_cov._version)):
+            if "event" in renorm_cache:
+                torch.cuda.current_stream().wait_event(renorm_cache["event"])
+            W = renorm_cache["W"]
+        else:
+            W = ns_whiten(uncorrelated_running_cov, NS_COLD_ITERS if whiten == "ns_warm" else ns_iters)[0]
+        Y = (W @ Xc_perm).permute(0, 3, 1, 2).reshape(B, T, C)
+        if gamma is not None:
+            Y = Y * gamma.view(1, 1, -1)
+        if beta is not None and bias:
+            Y = Y + beta.view(1, 1, -1)
+        return Y, running_mean.detach(), running_cov.detach(), gamma, beta
+    L = torch.linalg.cholesky(uncorrelated_running_cov)  # (B or 1, n_groups, G, G)
     # NOTE: torch.linalg.solve_triangular on the MPS backend miscomputes the
     # result when the triangular factor has a leading batch dim of 1 that must
     # broadcast against B (the inference path uses a shared (1, n_groups, G, G)
@@ -845,9 +1285,15 @@ class BatchWhiteningBlock(nn.Module):
     def __init__(self, num_features,momentum=0.1,eps=1e-8,pre_bias_block=None,num_bias_features=None,center_mode="running_mean",group_size=None,
                  fix_factor=0.9, warmup_ema_buffer=False, inference_ema=False, grad_scale=None,
                  calib_center="loo", renorm=False, renorm_stats="loo", stat_grad="full",
-                 renorm_cache=True, shrink_target="diag", renorm_fused=False):
+                 renorm_cache=True, shrink_target="diag", renorm_fused=False,
+                 whiten="cholesky", ns_iters=5, ns_refresh=0, fast=False, side_stream=False):
         super().__init__()
+        # Set (to its eps) by the owner when BW is followed by a LayerNorm without
+        # gain or bias, which is then applied here (fused in the fast path).
+        self.post_norm_eps = None
         self.renorm_fused = renorm_fused
+        self.whiten, self.ns_iters, self.ns_refresh = whiten, ns_iters, ns_refresh
+        self.fast, self.side_stream = fast, side_stream
         self.stat_grad = stat_grad
         self.shrink_target = shrink_target
         self.renorm_cache = {} if renorm_cache else None
@@ -974,8 +1420,21 @@ class BatchWhiteningBlock(nn.Module):
             self.calib_M2 = self.calib_M2.to(X.device)
             self.calib_count = self.calib_count.to(X.device)
 
+        if X.is_cuda and self.renorm_cache and "event" in self.renorm_cache:
+            torch.cuda.current_stream().wait_event(self.renorm_cache["event"])  # buffers written on the side stream
         if self.collect_calib_stats:
             self._accumulate_calibration_from_input(X)
+
+        if (self.fast and torch.is_grad_enabled() and not self.collect_calib_stats and self.renorm
+                and self.renorm_stats == "batch" and self.renorm_fused and self.num_groups == 1
+                and self.center_mode in ("running_mean", "leave_one_out") and not self.cov_warmup
+                and self.stat_grad == "full" and self.grad_scale in (None, 1.0)
+                and self.pre_bias_block is None and X.dtype == torch.float32):
+            return renorm_fast_whiten(
+                X, self.gamma, self.beta, self.running_mean, self.running_cov, self.eps, self.momentum,
+                self.fix_factor, self.center_mode, self.update_running_stats, self.update_running_cov_stats,
+                self.renorm_cache, self.shrink_target, self.whiten, self.ns_iters, self.ns_refresh,
+                self.side_stream, self.post_norm_eps)
 
         # Save the updated running_mean and moving_var
         Y, self.running_mean, self.running_cov, self.gamma, self.beta = batch_orthonorm(
@@ -995,12 +1454,17 @@ class BatchWhiteningBlock(nn.Module):
             renorm_cache=self.renorm_cache,
             shrink_target=self.shrink_target,
             renorm_fused=self.renorm_fused,
+            whiten=self.whiten,
+            ns_iters=self.ns_iters,
+            ns_refresh=self.ns_refresh,
             training_mode=True if self.collect_calib_stats else None)
         if self.pre_bias_block is not None:
             Y=self.pre_bias_block(Y)
         # add the bias
         shape = (1, 1, self.n_bias_features)
         Y = Y + self.beta.view(shape)
+        if self.post_norm_eps is not None:
+            Y = F.layer_norm(Y, (Y.size(-1),), eps=self.post_norm_eps)
         return Y
 
 
@@ -1120,6 +1584,13 @@ def _make_norm_layer(config, layer_norm_fallback=True):
             renorm_cache=config.bw_renorm_cache,
             shrink_target=config.bw_shrink_target,
             renorm_fused=config.bw_renorm_fused,
+            # ns_chol needs renorm with batch statistics; without them it is Cholesky
+            whiten=("cholesky" if config.bw_whiten == "ns_chol" and not (config.bw_renorm and config.bw_renorm_stats == "batch")
+                    else config.bw_whiten),
+            ns_iters=config.bw_ns_iters,
+            ns_refresh=config.bw_ns_refresh,
+            fast=config.bw_fast,
+            side_stream=config.bw_side_stream,
         )
     elif config.normalization_type == "center_only":
         return BatchCenterBlock(config.n_embd, center_mode=config.batch_center_mode)
@@ -1147,6 +1618,9 @@ class Block(nn.Module):
             return LayerNorm(C, bias=config.bias) if post == "ln_before" and not isinstance(bw, nn.Identity) else nn.Identity()
 
         def after(bw):  # normalization between BW (or nothing) and the sublayer
+            if post == "ln_noaffine" and config.bw_fuse_post_norm and isinstance(bw, BatchWhiteningBlock):
+                bw.post_norm_eps = 1e-5  # nn.LayerNorm's default
+                return nn.Identity()
             if isinstance(bw, nn.Identity) or post == "ln":
                 return LayerNorm(C, bias=config.bias)
             return {"rms": lambda: RMSNorm(C), "ln_noaffine": lambda: nn.LayerNorm(C, elementwise_affine=False),
@@ -1237,6 +1711,7 @@ class GPTConfig:
     # Normalization around each BW layer: "ln" (BW -> LayerNorm), "rms" (BW -> RMSNorm),
     # "ln_noaffine" (BW -> LayerNorm without gain/bias), "none" (BW only), "ln_before" (LayerNorm -> BW).
     bw_post_norm: str = "ln"
+    bw_fuse_post_norm: bool = True  # "ln_noaffine": apply it inside BW (same values, fewer passes)
     # renorm "batch" only: current-batch statistics with gradient, "full", "mean" or "none".
     bw_stat_grad: str = "full"
     # renorm "batch" only: reuse last step's whitening matrix when it equals the buffers' (exact).
@@ -1245,6 +1720,11 @@ class GPTConfig:
     bw_shrink_target: str = "diag"
     # renorm "batch" only: hand-written backward (same value and gradient, faster).
     bw_renorm_fused: bool = True
+    bw_whiten: str = "cholesky"  # "cholesky", "ns", "ns_warm" or "ns_chol" (NS forward, Cholesky backward; renorm batch only)
+    bw_ns_iters: int = 5
+    bw_fast: bool = True  # renorm batch, one group: fewer passes over the activations (same math)
+    bw_side_stream: bool = True  # bw_fast: whitening-matrix math on a side CUDA stream
+    bw_ns_refresh: int = 0  # ns_warm: cold restart every this many steps (0: never)
     # Deprecated compatibility field for older checkpoints/configs.
     batch_whitening: bool = None
 

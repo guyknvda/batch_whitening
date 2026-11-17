@@ -1,0 +1,97 @@
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+LayerNorm                     0.293 ms / layer (fwd+bwd)
+n_groups: 1, group_size: 384
+BW, no cache                  2.175 ms / layer (fwd+bwd)
+BW, cache                     1.826 ms / layer (fwd+bwd)
+BW, cache, fused backward     1.357 ms / layer (fwd+bwd)
+BW, cache, stat_grad=mean     1.260 ms / layer (fwd+bwd)
+BW, cache, stat_grad=none     1.191 ms / layer (fwd+bwd)
+BW, cache, fused, NS 3        2.182 ms / layer (fwd+bwd)
+BW, cache, fused, NS 5        2.706 ms / layer (fwd+bwd)
+BW, cache, fused, NS 7        3.185 ms / layer (fwd+bwd)
+BW, cache, fused, NS 10       3.847 ms / layer (fwd+bwd)
+BW, cache, fused, NS warm 1   1.649 ms / layer (fwd+bwd)
+BW, cache, fused, NS warm 2   1.960 ms / layer (fwd+bwd)
+BW, cache, fused, NS warm 3   2.269 ms / layer (fwd+bwd)
+BW fast, Cholesky             1.147 ms / layer (fwd+bwd)
+BW fast, NS 10                2.825 ms / layer (fwd+bwd)
+STAGE:2026-11-16 11:36:15 2465352:2465352 ActivityProfilerController.cpp:314] Completed Stage: Warm Up
+STAGE:2026-11-16 11:36:15 2465352:2465352 ActivityProfilerController.cpp:320] Completed Stage: Collection
+STAGE:2026-11-16 11:36:15 2465352:2465352 ActivityProfilerController.cpp:324] Completed Stage: Post Processing
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+void kernel<getrf_wo_pivot_params_<float, 0, 256, 1,...         0.00%       0.000us         0.00%       0.000us       0.000us       3.343ms        20.01%       3.343ms     167.150us            20  
+void kernel_trsm_l_mul32<float, 8, false, false, fal...         0.00%       0.000us         0.00%       0.000us       0.000us       2.221ms        13.29%       2.221ms      55.525us            40  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_1...         0.00%       0.000us         0.00%       0.000us       0.000us       1.641ms         9.82%       1.641ms      41.025us            40  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_1...         0.00%       0.000us         0.00%       0.000us       0.000us       1.521ms         9.10%       1.521ms      38.025us            40  
+sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x12...         0.00%       0.000us         0.00%       0.000us       0.000us     884.000us         5.29%     884.000us      44.200us            20  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us     727.000us         4.35%     727.000us      18.175us            40  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     678.000us         4.06%     678.000us       2.618us           259  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_6...         0.00%       0.000us         0.00%       0.000us       0.000us     652.000us         3.90%     652.000us       6.520us           100  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     642.000us         3.84%     642.000us       2.140us           300  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us     632.000us         3.78%     632.000us      31.600us            20  
+                         Memcpy DtoD (Device -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     548.000us         3.28%     548.000us       5.480us           100  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     491.000us         2.94%     491.000us      12.275us            40  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     330.000us         1.97%     330.000us      16.500us            20  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     320.000us         1.92%     320.000us       2.286us           140  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     291.000us         1.74%     291.000us      14.550us            20  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 9.108ms
+Self CUDA time total: 16.709ms
+

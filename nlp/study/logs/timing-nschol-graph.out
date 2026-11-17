@@ -1,0 +1,4 @@
+== bw_whiten=ns_chol bw_ns_iters=10
+batch 64 compile_glue True normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine bw_whiten=ns_chol bw_ns_iters=10: wall 26.11 ms/step (100-step blocks: 26.11, 38.13, 38.27), CPU issue 344.73 ms/step, summed kernel time 37.43 ms/step
+== bw_whiten=ns_chol bw_ns_iters=10 bw_where=0,2,4
+batch 64 compile_glue True normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine bw_whiten=ns_chol bw_ns_iters=10 bw_where=0,2,4: wall 19.13 ms/step (100-step blocks: 19.13, 28.10, 28.03), CPU issue 339.35 ms/step, summed kernel time 33.19 ms/step

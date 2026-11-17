@@ -1,0 +1,32 @@
+--- TF32 False
+    12.1 us  one 384^3 product
+   489.7 us  coupled Newton-Schulz, 10 iterations (eager)
+   252.3 us  coupled Newton-Schulz, 5 iterations (eager)
+--- TF32 True
+     7.8 us  one 384^3 product
+   366.5 us  coupled Newton-Schulz, 10 iterations (eager)
+   196.5 us  coupled Newton-Schulz, 5 iterations (eager)
+[W Context.cpp:258] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+--- cusolver
+   157.0 us  cholesky_ex
+   124.4 us  solve_triangular(L, I)
+   863.8 us  inv_ex(L)
+  8837.7 us  eigh fp32
+  4078.8 us  eigh fp64
+--- magma
+   432.7 us  cholesky_ex
+   124.4 us  solve_triangular(L, I)
+  6291.9 us  inv_ex(L)
+ 24745.6 us  eigh fp32
+ 39835.7 us  eigh fp64
+   264.4 us  Newton-Schulz 10 iterations, CUDA graph replay
+--- covariance precision (relative to float64, centered)
+mean scale 0.0, TF32 False: cov err uncentered 1.2e-07, centered 1.1e-07; whitening matrix err (uncentered) 1.7e-07
+mean scale 0.0, TF32 True: cov err uncentered 3.4e-05, centered 3.4e-05; whitening matrix err (uncentered) 2.9e-05
+mean scale 1.0, TF32 False: cov err uncentered 1.0e-06, centered 1.1e-07; whitening matrix err (uncentered) 1.5e-06
+mean scale 1.0, TF32 True: cov err uncentered 6.4e-05, centered 3.4e-05; whitening matrix err (uncentered) 6.9e-05
+mean scale 3.0, TF32 False: cov err uncentered 8.7e-06, centered 1.1e-07; whitening matrix err (uncentered) 1.3e-05
+mean scale 3.0, TF32 True: cov err uncentered 4.7e-04, centered 3.4e-05; whitening matrix err (uncentered) 6.8e-04
+batch 64 compile_glue True normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine bw_whiten=ns bw_ns_iters=10: wall 21.94 ms/step (100-step blocks: 22.25, 22.07, 21.94), CPU issue 356.34 ms/step, summed kernel time 42.49 ms/step
+GPU span 41.11 ms/step, busy (any stream) 19.54 ms/step, per stream: 7: 18.17, 15: 1.37
+main stream idle: waiting on side stream 0.00 ms/step, other (CPU launch) 22.05 ms/step

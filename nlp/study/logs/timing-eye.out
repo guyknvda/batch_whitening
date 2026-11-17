@@ -1,0 +1,66 @@
+normalization_type=layer_norm: wall 13.94 ms/step (100-step blocks: 13.94, 13.94, 13.95), CPU issue 3.84 ms/step, summed kernel time 28.75 ms/step
+GPU span 14.29 ms/step, busy (any stream) 13.43 ms/step, per stream: 7: 13.43
+main stream idle: waiting on side stream 0.00 ms/step, other (CPU launch) 0.65 ms/step
+  kernel main  2109.4 us/step fmha_cutlassB_f32_aligned_64x64_k64_sm80(PyTorchMemEffAttention::Atten
+  kernel main  1572.1 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize128x128x32_warpgroupsiz
+  kernel main  1415.3 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x256x32_warpgroupsiz
+  kernel main  1255.7 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_tn_n_tilesize128x128x32_warpgroupsiz
+  kernel main  1032.3 us/step void at::native::(anonymous namespace)::GammaBetaBackwardCUDAKernel_32
+  kernel main   955.3 us/step fmha_cutlassF_f32_aligned_64x64_rf_sm80(PyTorchMemEffAttention::Attent
+  kernel main   607.8 us/step void at::native::vectorized_elementwise_kernel<4, at::native::GeluBack
+  kernel main   580.8 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x128_32x3_nt_ali
+  kernel main   528.5 us/step void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunc
+  kernel main   497.1 us/step void at::native::(anonymous namespace)::vectorized_layer_norm_kernel<f
+  kernel main   411.9 us/step void at::native::vectorized_elementwise_kernel<4, at::native::GeluCUDA
+  kernel main   341.2 us/step void at::native::(anonymous namespace)::nll_loss_forward_reduce_cuda_k
+  kernel main   316.9 us/step void at::native::(anonymous namespace)::layer_norm_grad_input_kernel_v
+  kernel main   316.9 us/step void at::native::(anonymous namespace)::CatArrayBatchedCopy_aligned16_
+  kernel main   230.3 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x128_32x5_nt_ali
+  kernel main   203.9 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x128x32_warpgroupsize
+  kernel main   186.4 us/step void at::native::vectorized_elementwise_kernel<4, at::native::FillFunc
+  kernel main   157.6 us/step void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at:
+  kernel main   142.1 us/step void at::native::vectorized_elementwise_kernel<4, at::native::BinaryFu
+  kernel main   130.0 us/step void at::native::(anonymous namespace)::multi_tensor_apply_kernel<at::
+  kernel main   121.2 us/step void at::native::(anonymous namespace)::nll_loss_backward_reduce_cuda_
+  kernel main    53.9 us/step void splitKreduce_kernel<32, 16, int, float, float, float, float, true
+  kernel main    49.6 us/step void at_cuda_detail::cub::DeviceRadixSortOnesweepKernel<at_cuda_detail
+  kernel main    42.4 us/step void at::native::(anonymous namespace)::indexSelectLargeIndex<float, l
+  kernel main    32.0 us/step void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_imp
+  kernel main    28.2 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x128_32x3_nn_ali
+  kernel main    28.1 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x64_32x6_nt_alig
+  kernel main    23.7 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x128_32x3_tn_ali
+  kernel main     9.1 us/step void at::native::reduce_kernel<128, 4, at::native::ReduceOp<float, at:
+  kernel main     9.0 us/step void at::native::(anonymous namespace)::compute_grad_weight<float, lon
+normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 16.05 ms/step (100-step blocks: 16.06, 16.06, 16.05), CPU issue 342.80 ms/step, summed kernel time 41.93 ms/step
+GPU span 16.60 ms/step, busy (any stream) 15.57 ms/step, per stream: 7: 15.09, 18: 4.18
+main stream idle: waiting on side stream 0.04 ms/step, other (CPU launch) 1.03 ms/step
+  kernel side  2992.6 us/step void kernel<getrf_wo_pivot_params_<float, 0, 256, 1, 64, 64, 68, 8, 1,
+  kernel main  2113.6 us/step fmha_cutlassB_f32_aligned_64x64_k64_sm80(PyTorchMemEffAttention::Atten
+  kernel main  2086.7 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_tn_n_tilesize128x128x32_warpgroupsiz
+  kernel main  1550.3 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize128x128x32_warpgroupsiz
+  kernel main  1414.3 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x256x32_warpgroupsiz
+  kernel main   965.2 us/step fmha_cutlassF_f32_aligned_64x64_rf_sm80(PyTorchMemEffAttention::Attent
+  kernel side   878.3 us/step void kernel_trsm_l_mul32<float, 8, false, false, false, false>(int, in
+  kernel main   781.1 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x128_32x5_nt_ali
+  kernel main   608.4 us/step void at::native::vectorized_elementwise_kernel<4, at::native::GeluBack
+  kernel main   583.1 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_128x128_32x3_nt_ali
+  kernel main   554.5 us/step void at::native::(anonymous namespace)::GammaBetaBackwardCUDAKernel_32
+  kernel main   545.1 us/step void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunc
+  kernel main   528.1 us/step void at::native::(anonymous namespace)::vectorized_layer_norm_kernel<f
+  kernel main   406.2 us/step void at::native::vectorized_elementwise_kernel<4, at::native::GeluCUDA
+  kernel main   348.8 us/step void at::native::(anonymous namespace)::nll_loss_forward_reduce_cuda_k
+  kernel main   316.4 us/step void at::native::(anonymous namespace)::CatArrayBatchedCopy_aligned16_
+  kernel main   313.7 us/step void at::native::(anonymous namespace)::layer_norm_grad_input_kernel_v
+  kernel main   204.2 us/step sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x128x32_warpgroupsize
+  kernel main   186.2 us/step void at::native::vectorized_elementwise_kernel<4, at::native::FillFunc
+  kernel main   161.4 us/step std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int,
+  kernel main   156.8 us/step void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at:
+  kernel main   156.2 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_64x64_32x6_nn_align
+  kernel main   151.7 us/step triton__0d1d2d3d4d5d6d7d8d9d10de11de
+  kernel main   141.0 us/step void at::native::vectorized_elementwise_kernel<4, at::native::BinaryFu
+  kernel main   129.0 us/step void at::native::(anonymous namespace)::multi_tensor_apply_kernel<at::
+  kernel main   121.7 us/step void at::native::(anonymous namespace)::nll_loss_backward_reduce_cuda_
+  kernel main   115.1 us/step void splitKreduce_kernel<32, 16, int, float, float, float, float, true
+  kernel side    69.8 us/step void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_imp
+  kernel side    60.6 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_64x64_32x6_tn_align
+  kernel side    59.1 us/step void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_64x64_32x6_tt_align

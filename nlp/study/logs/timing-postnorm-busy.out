@@ -1,0 +1,4 @@
+normalization_type=layer_norm: wall 13.93 ms/step (100-step blocks: 13.93, 13.93, 13.93), CPU issue 4.16 ms/step, summed kernel time 28.78 ms/step
+GPU span 14.32 ms/step, busy (any stream) 13.44 ms/step, per stream: 7: 13.44
+normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 16.36 ms/step (100-step blocks: 16.36, 16.40, 16.36), CPU issue 343.16 ms/step, summed kernel time 39.60 ms/step
+GPU span 18.54 ms/step, busy (any stream) 16.53 ms/step, per stream: 7: 15.20, 17: 3.04

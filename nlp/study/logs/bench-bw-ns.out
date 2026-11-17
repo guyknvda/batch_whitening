@@ -1,0 +1,72 @@
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+LayerNorm                     0.293 ms / layer (fwd+bwd)
+n_groups: 1, group_size: 384
+BW, no cache                  2.147 ms / layer (fwd+bwd)
+BW, cache                     1.808 ms / layer (fwd+bwd)
+BW, cache, fused backward     1.313 ms / layer (fwd+bwd)
+BW, cache, stat_grad=mean     1.249 ms / layer (fwd+bwd)
+BW, cache, stat_grad=none     1.146 ms / layer (fwd+bwd)
+BW, cache, fused, NS 3        2.010 ms / layer (fwd+bwd)
+BW, cache, fused, NS 5        2.527 ms / layer (fwd+bwd)
+BW, cache, fused, NS 7        3.057 ms / layer (fwd+bwd)
+BW, cache, fused, NS 10       3.812 ms / layer (fwd+bwd)
+STAGE:2026-11-16 04:07:41 4110233:4110233 ActivityProfilerController.cpp:314] Completed Stage: Warm Up
+STAGE:2026-11-16 04:07:41 4110233:4110233 ActivityProfilerController.cpp:320] Completed Stage: Collection
+STAGE:2026-11-16 04:07:41 4110233:4110233 ActivityProfilerController.cpp:324] Completed Stage: Post Processing
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_6...         0.00%       0.000us         0.00%       0.000us       0.000us       3.438ms        14.92%       3.438ms       6.139us           560  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       3.252ms        14.12%       3.252ms      23.229us           140  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       1.763ms         7.65%       1.763ms      17.630us           100  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.608ms         6.98%       1.608ms       2.300us           699  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_6...         0.00%       0.000us         0.00%       0.000us       0.000us       1.580ms         6.86%       1.580ms       6.077us           260  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_1...         0.00%       0.000us         0.00%       0.000us       0.000us       1.521ms         6.60%       1.521ms      38.025us            40  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_6...         0.00%       0.000us         0.00%       0.000us       0.000us       1.440ms         6.25%       1.440ms       6.000us           240  
+sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x12...         0.00%       0.000us         0.00%       0.000us       0.000us       1.379ms         5.99%       1.379ms      34.475us            40  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.152ms         5.00%       1.152ms      28.800us            40  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.148ms         4.98%       1.148ms       1.435us           800  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.110ms         4.82%       1.110ms      27.750us            40  
+sm90_xmma_gemm_f32f32_tf32f32_f32_tn_n_tilesize128x1...         0.00%       0.000us         0.00%       0.000us       0.000us     553.000us         2.40%     553.000us      27.650us            20  
+                         Memcpy DtoD (Device -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     506.000us         2.20%     506.000us       8.433us            60  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     441.000us         1.91%     441.000us       2.005us           220  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     324.000us         1.41%     324.000us      16.200us            20  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 13.388ms
+Self CUDA time total: 23.036ms
+

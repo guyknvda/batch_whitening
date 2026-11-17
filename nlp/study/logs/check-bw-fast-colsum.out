@@ -1,0 +1,4 @@
+cholesky  post_eps None fast vs reference, 20 steps, max rel err 8.1e-07
+cholesky  post_eps 1e-05 fast vs reference, 20 steps, max rel err 7.9e-07
+ns        post_eps None fast vs reference, 20 steps, max rel err 9.0e-07
+ns        post_eps 1e-05 fast vs reference, 20 steps, max rel err 8.9e-07

@@ -1,0 +1,108 @@
+number of parameters: 10.65M
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 14, with 5,376 parameters
+using fused AdamW: True
+STAGE:2026-11-16 11:44:21 2594431:2594431 ActivityProfilerController.cpp:314] Completed Stage: Warm Up
+STAGE:2026-11-16 11:44:22 2594431:2594431 ActivityProfilerController.cpp:320] Completed Stage: Collection
+STAGE:2026-11-16 11:44:22 2594431:2594431 ActivityProfilerController.cpp:324] Completed Stage: Post Processing
+normalization_type=layer_norm: wall 14.07 ms/step, summed kernel time 28.94 ms/step
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         9.08%      11.767ms        19.82%      25.685ms      34.247us      55.256ms        40.36%      66.369ms      88.492us           750  
+                    aten::_efficient_attention_backward         1.04%       1.343ms         4.73%       6.127ms     102.117us      21.110ms        15.42%      26.765ms     446.083us            60  
+fmha_cutlassB_f32_aligned_64x64_k64_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us      21.110ms        15.42%      21.110ms     351.833us            60  
+sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize128x1...         0.00%       0.000us         0.00%       0.000us       0.000us      16.309ms        11.91%      16.309ms      90.606us           180  
+sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x2...         0.00%       0.000us         0.00%       0.000us       0.000us      14.124ms        10.32%      14.124ms     117.700us           120  
+                       aten::native_layer_norm_backward         0.75%     971.000us         2.79%       3.615ms      27.808us      13.464ms         9.83%      14.007ms     107.746us           130  
+sm90_xmma_gemm_f32f32_tf32f32_f32_tn_n_tilesize128x1...         0.00%       0.000us         0.00%       0.000us       0.000us      13.040ms         9.53%      13.040ms      54.333us           240  
+void at::native::(anonymous namespace)::GammaBetaBac...         0.00%       0.000us         0.00%       0.000us       0.000us      10.287ms         7.51%      10.287ms      79.131us           130  
+                     aten::_efficient_attention_forward         0.49%     639.000us         0.98%       1.270ms      21.167us       9.585ms         7.00%      10.052ms     167.533us            60  
+fmha_cutlassF_f32_aligned_64x64_rf_sm80(PyTorchMemEf...         0.00%       0.000us         0.00%       0.000us       0.000us       9.585ms         7.00%       9.585ms     159.750us            60  
+                                    aten::gelu_backward         0.32%     410.000us         0.53%     681.000us      11.350us       6.081ms         4.44%       6.206ms     103.433us            60  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       6.081ms         4.44%       6.081ms     101.350us            60  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_1...         0.00%       0.000us         0.00%       0.000us       0.000us       5.787ms         4.23%       5.787ms      96.450us            60  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       5.277ms         3.85%       5.277ms      21.108us           250  
+                                   cudaFuncSetAttribute         0.02%      21.000us         0.02%      21.000us       0.010us       4.974ms         3.63%       4.974ms       2.475us          2010  
+                                aten::native_layer_norm         1.31%       1.692ms         2.98%       3.863ms      29.715us       4.961ms         3.62%       5.446ms      41.892us           130  
+void at::native::(anonymous namespace)::vectorized_l...         0.00%       0.000us         0.00%       0.000us       0.000us       4.961ms         3.62%       4.961ms      38.162us           130  
+                                       cudaLaunchKernel        14.46%      18.742ms        14.46%      18.742ms      10.186us       4.395ms         3.21%       4.525ms       2.459us          1840  
+                                             aten::gelu         0.34%     446.000us         0.49%     634.000us      10.567us       4.121ms         3.01%       4.394ms      73.233us            60  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       4.121ms         3.01%       4.121ms      68.683us            60  
+                                 aten::nll_loss_forward         0.10%     129.000us         0.13%     169.000us      16.900us       3.385ms         2.47%       3.385ms     338.500us            10  
+void at::native::(anonymous namespace)::nll_loss_for...         0.00%       0.000us         0.00%       0.000us       0.000us       3.385ms         2.47%       3.385ms     338.500us            10  
+void at::native::(anonymous namespace)::layer_norm_g...         0.00%       0.000us         0.00%       0.000us       0.000us       3.177ms         2.32%       3.177ms      24.438us           130  
+                                              aten::cat         0.43%     554.000us         0.61%     788.000us      13.133us       3.151ms         2.30%       3.189ms      53.150us            60  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us       3.151ms         2.30%       3.151ms      52.517us            60  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 129.604ms
+Self CUDA time total: 136.899ms
+
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+number of parameters: 10.65M
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 27, with 10,368 parameters
+using fused AdamW: True
+STAGE:2026-11-16 11:44:28 2596415:2596415 ActivityProfilerController.cpp:314] Completed Stage: Warm Up
+STAGE:2026-11-16 11:44:28 2596415:2596415 ActivityProfilerController.cpp:320] Completed Stage: Collection
+STAGE:2026-11-16 11:44:28 2596415:2596415 ActivityProfilerController.cpp:324] Completed Stage: Post Processing
+normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_fast=True bw_side_stream=True: wall 17.78 ms/step, summed kernel time 40.77 ms/step
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm        12.67%      20.624ms        18.06%      29.396ms      20.848us      60.255ms        31.58%      70.647ms      50.104us          1410  
+                    aten::_efficient_attention_backward         0.90%       1.466ms         3.78%       6.149ms     102.483us      21.095ms        11.05%      27.141ms     452.350us            60  
+fmha_cutlassB_f32_aligned_64x64_k64_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us      21.095ms        11.05%      21.095ms     351.583us            60  
+sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize128x1...         0.00%       0.000us         0.00%       0.000us       0.000us      16.737ms         8.77%      16.737ms      92.983us           180  
+                               aten::linalg_cholesky_ex         1.00%       1.628ms         2.13%       3.467ms      57.783us      16.689ms         8.75%      18.794ms     313.233us            60  
+void kernel<getrf_wo_pivot_params_<float, 0, 256, 1,...         0.00%       0.000us         0.00%       0.000us       0.000us      16.587ms         8.69%      16.587ms     276.450us            60  
+sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x2...         0.00%       0.000us         0.00%       0.000us       0.000us      14.131ms         7.41%      14.131ms     117.758us           120  
+sm90_xmma_gemm_f32f32_tf32f32_f32_tn_n_tilesize128x1...         0.00%       0.000us         0.00%       0.000us       0.000us      13.800ms         7.23%      13.800ms      57.500us           240  
+                       aten::native_layer_norm_backward         0.70%       1.134ms         1.81%       2.948ms      22.677us      13.424ms         7.03%      14.089ms     108.377us           130  
+                                       cudaLaunchKernel        13.08%      21.294ms        13.08%      21.294ms       3.391us      11.549ms         6.05%      12.082ms       1.924us          6280  
+void at::native::(anonymous namespace)::GammaBetaBac...         0.00%       0.000us         0.00%       0.000us       0.000us      10.255ms         5.37%      10.255ms      78.885us           130  
+                     aten::_efficient_attention_forward         0.44%     718.000us         0.90%       1.463ms      24.383us       9.539ms         5.00%       9.818ms     163.633us            60  
+fmha_cutlassF_f32_aligned_64x64_rf_sm80(PyTorchMemEf...         0.00%       0.000us         0.00%       0.000us       0.000us       9.539ms         5.00%       9.539ms     158.983us            60  
+                          aten::linalg_solve_triangular         0.99%       1.617ms         1.86%       3.020ms      50.333us       8.091ms         4.24%       8.708ms     145.133us            60  
+void kernel_trsm_l_mul32<float, 8, false, false, fal...         0.00%       0.000us         0.00%       0.000us       0.000us       7.549ms         3.96%       7.549ms      62.908us           120  
+                                              aten::bmm         1.90%       3.086ms         2.23%       3.623ms      30.192us       6.419ms         3.36%       7.627ms      63.558us           120  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_6...         0.00%       0.000us         0.00%       0.000us       0.000us       6.419ms         3.36%       6.419ms      53.492us           120  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       6.094ms         3.19%       6.094ms       6.697us           910  
+                                    aten::gelu_backward         0.33%     538.000us         0.50%     808.000us      13.467us       6.081ms         3.19%       6.326ms     105.433us            60  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       6.081ms         3.19%       6.081ms     101.350us            60  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_1...         0.00%       0.000us         0.00%       0.000us       0.000us       5.789ms         3.03%       5.789ms      96.483us            60  
+                                            aten::addmm         1.29%       2.107ms         1.53%       2.492ms      20.767us       5.395ms         2.83%       5.641ms      47.008us           120  
+void cutlass::Kernel<cutlass_80_tensorop_s1688gemm_1...         0.00%       0.000us         0.00%       0.000us       0.000us       5.395ms         2.83%       5.395ms      44.958us           120  
+                                aten::native_layer_norm         1.27%       2.073ms         2.28%       3.716ms      28.585us       4.978ms         2.61%       5.496ms      42.277us           130  
+void at::native::(anonymous namespace)::vectorized_l...         0.00%       0.000us         0.00%       0.000us       0.000us       4.978ms         2.61%       4.978ms      38.292us           130  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 162.802ms
+Self CUDA time total: 190.827ms
+

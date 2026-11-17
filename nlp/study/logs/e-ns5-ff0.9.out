@@ -1,0 +1,134 @@
+Using config_name: nanogpt
+Overriding wandb_run_name = e-ns5-ff0.9
+Overriding out_dir = /tmp/out-e-ns5-ff0.9
+Overriding normalization_type = full_bw
+Overriding bw_renorm = True
+Overriding bw_renorm_stats = batch
+Overriding bw_group_size = 384
+Overriding batch_center_mode = running_mean
+Overriding bw_momentum = 0.7
+Overriding bw_warmup = none
+Overriding abort_ref_log = base-s1_20485372.out
+Overriding abort_ratio = 1.5
+Overriding learning_rate = 0.0015
+Overriding bw_whiten = ns
+Overriding bw_fix_factor = 0.9
+Overriding bw_ns_iters = 5
+normalization_type: full_bw
+batch_center_mode: running_mean
+bw_iter_calibration: False
+tokens per iteration will be: 16,384
+found vocab_size = 65 (inside data/shakespeare_char/meta.pkl)
+Initializing a new model from scratch
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+-----------BW triage------------ 
+
+raw block size: 7
+B, T, C, mu=(32, 64, 384, 0.30000000000000004) --> blk_size = 8, momentum=0.30000000000000004
+number of parameters: 10.65M
+n_groups: 1, group_size: 384
+causality check (training-mode forward): leak=0.000e+00
+num decayed parameter tensors: 26, with 10,740,096 parameters
+num non-decayed parameter tensors: 27, with 10,368 parameters
+using fused AdamW: True
+wandb: Currently logged in as: hsivan (nv-welcome) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run lxltwzh7
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /tmp/wandb_22094595/wandb/run-20261116_041735-lxltwzh7
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run e-ns5-ff0.9
+wandb: ⭐️ View project at https://wandb.ai/nv-welcome/shakespeare-char
+wandb: 🚀 View run at https://wandb.ai/nv-welcome/shakespeare-char/runs/lxltwzh7
+step 0: train loss 4.2875, val loss 4.2823
+step 0: bw input_rms 0.0838 (max 0.1244), output_scale 0.0698, resid_mean_sd 0.5394, running_mean_err 1.0000, token_norm_cv in 0.052 out 0.052
+step 0: cond mlp_in 3014 [1.22e+05, 1.34e+03, 1.38e+03, 1.42e+03, 1.52e+03, 1.54e+03]
+step 0: cond attn_in 3.095e+05 [9.45e+16, 1.46e+03, 1.53e+03, 1.54e+03, 1.65e+03, 1.65e+03]
+step 0: cond resid 3010 [1.16e+05, 1.31e+03, 1.38e+03, 1.47e+03, 1.55e+03, 1.55e+03]
+iter 0: loss 4.2785, time 11399.59ms, mfu -100.00%
+iter 10: loss 3.1220, time 93.70ms, mfu 3.98%
+iter 20: loss 2.6737, time 93.95ms, mfu 3.98%
+iter 30: loss 2.5610, time 95.41ms, mfu 3.97%
+iter 40: loss 2.5380, time 83.78ms, mfu 4.02%
+iter 50: loss 2.5568, time 92.63ms, mfu 4.02%
+iter 60: loss 2.5073, time 93.45ms, mfu 4.02%
+iter 70: loss 2.5059, time 93.96ms, mfu 4.01%
+iter 80: loss 2.4611, time 93.62ms, mfu 4.01%
+iter 90: loss 2.4809, time 94.42ms, mfu 4.00%
+iter 100: loss 2.4527, time 93.49ms, mfu 4.00%
+iter 110: loss 2.3960, time 94.67ms, mfu 3.99%
+iter 120: loss 2.3776, time 94.12ms, mfu 3.99%
+iter 130: loss 2.3352, time 94.15ms, mfu 3.99%
+iter 140: loss 2.2055, time 95.52ms, mfu 3.98%
+iter 150: loss 2.1544, time 95.58ms, mfu 3.97%
+iter 160: loss 2.1403, time 91.47ms, mfu 3.98%
+iter 170: loss 2.0863, time 93.55ms, mfu 3.98%
+iter 180: loss 2.0381, time 92.62ms, mfu 3.99%
+iter 190: loss 1.9925, time 95.32ms, mfu 3.98%
+iter 200: loss 1.9902, time 97.29ms, mfu 3.96%
+iter 210: loss 1.9734, time 96.11ms, mfu 3.96%
+iter 220: loss 1.9099, time 95.04ms, mfu 3.95%
+iter 230: loss 1.9083, time 98.16ms, mfu 3.94%
+iter 240: loss 1.8869, time 95.64ms, mfu 3.93%
+step 250: train loss 1.8524, val loss 1.9774
+step 250: bw input_rms 2.5013 (max 4.7007), output_scale 0.2155, resid_mean_sd 0.0996, running_mean_err 0.1045, token_norm_cv in 0.398 out 0.139
+step 250: cond mlp_in 2.569e+04 [2.71e+04, 1.31e+04, 1.82e+04, 2.6e+04, 3.83e+04, 4.46e+04]
+step 250: cond attn_in 2.366e+07 [3.8e+16, 2.98e+05, 3.13e+05, 3.49e+05, 3.72e+05, 3.82e+05]
+step 250: cond resid 9.901e+05 [1.42e+06, 3.29e+05, 5.99e+05, 9.74e+05, 1.63e+06, 2.12e+06]
+saving checkpoint to /tmp/out-e-ns5-ff0.9
+iter 250: loss 1.8456, time 11077.44ms, mfu 3.54%
+iter 260: loss 1.8083, time 96.77ms, mfu 3.57%
+iter 270: loss 1.8342, time 97.30ms, mfu 3.60%
+iter 280: loss 1.7950, time 96.10ms, mfu 3.63%
+iter 290: loss 1.7587, time 96.33ms, mfu 3.65%
+iter 300: loss 1.7866, time 97.84ms, mfu 3.67%
+iter 310: loss 1.7320, time 96.52ms, mfu 3.69%
+iter 320: loss 1.7258, time 96.56ms, mfu 3.70%
+iter 330: loss 1.7246, time 97.43ms, mfu 3.72%
+iter 340: loss 1.7015, time 94.75ms, mfu 3.74%
+iter 350: loss 1.6880, time 92.62ms, mfu 3.77%
+iter 360: loss 1.7190, time 92.85ms, mfu 3.79%
+iter 370: loss 1.7096, time 96.73ms, mfu 3.80%
+iter 380: loss 1.6968, time 94.90ms, mfu 3.81%
+iter 390: loss 1.6952, time 95.93ms, mfu 3.82%
+iter 400: loss 1.6480, time 96.31ms, mfu 3.82%
+iter 410: loss 1.6952, time 96.49ms, mfu 3.83%
+iter 420: loss 1.7205, time 96.28ms, mfu 3.83%
+iter 430: loss 1.7103, time 97.83ms, mfu 3.83%
+iter 440: loss 1.6741, time 96.90ms, mfu 3.83%
+iter 450: loss 1.7143, time 82.81ms, mfu 3.90%
+iter 460: loss 1.6837, time 96.93ms, mfu 3.89%
+iter 470: loss 1.8224, time 96.97ms, mfu 3.89%
+iter 480: loss 2.0149, time 94.95ms, mfu 3.89%
+iter 490: loss 1.9377, time 93.30ms, mfu 3.90%
+step 500: train loss 2.1828, val loss 2.2922
+step 500: bw input_rms 6.7933 (max 13.0392), output_scale 0.1948, resid_mean_sd 0.2805, running_mean_err 0.1981, token_norm_cv in 0.573 out 0.173
+step 500: cond mlp_in 7.183e+04 [1.06e+05, 3.95e+04, 5.74e+04, 6.18e+04, 8.63e+04, 1.08e+05]
+step 500: cond attn_in 4.458e+07 [4.29e+16, 6.13e+05, 6.54e+05, 7.57e+05, 7.9e+05, 7.63e+05]
+step 500: cond resid 3.237e+06 [6.8e+06, 1.04e+06, 1.9e+06, 3.1e+06, 4.98e+06, 5.54e+06]
+ABORT at step 500: train loss 2.1828 (reference 1.3931, ratio 1.5)
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33me-ns5-ff0.9[0m at: [34m[0m
+[1;34mwandb[0m: Find logs at: [1;35m../../../tmp/wandb_22094595/wandb/run-20261116_041735-lxltwzh7/logs[0m

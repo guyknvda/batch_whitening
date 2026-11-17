@@ -1,0 +1,4 @@
+batch 64 normalization_type=layer_norm: wall 13.95 ms/step (100-step blocks: 13.95, 13.95, 13.96), CPU issue 4.05 ms/step, summed kernel time 28.78 ms/step
+batch 64 normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 16.05 ms/step (100-step blocks: 16.09, 16.09, 16.05), CPU issue 342.76 ms/step, summed kernel time 42.30 ms/step
+batch 96 normalization_type=layer_norm: wall 20.11 ms/step (100-step blocks: 20.11, 20.11, 20.11), CPU issue 3.91 ms/step, summed kernel time 42.26 ms/step
+batch 96 normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 22.42 ms/step (100-step blocks: 22.42, 22.42, 22.42), CPU issue 345.22 ms/step, summed kernel time 58.74 ms/step

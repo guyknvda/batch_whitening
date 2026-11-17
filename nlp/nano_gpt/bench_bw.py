@@ -1,7 +1,9 @@
 """Time one BW layer (forward + backward) at nanoGPT size, per variant, and profile it.
 
-Run: python bench_bw.py   (needs a GPU)
+Run: python bench_bw.py ["variant to profile"]   (needs a GPU)
 """
+import sys
+
 import torch
 from torch.profiler import ProfilerActivity, profile
 
@@ -44,11 +46,20 @@ variants = {
     "BW, cache, fused backward": make(renorm_cache=True, renorm_fused=True),
     "BW, cache, stat_grad=mean": make(renorm_cache=True, stat_grad="mean"),
     "BW, cache, stat_grad=none": make(renorm_cache=True, stat_grad="none"),
+    **{f"BW, cache, fused, NS {k}": make(renorm_cache=True, renorm_fused=True, whiten="ns", ns_iters=k)
+       for k in (3, 5, 7, 10)},
+    **{f"BW, cache, fused, NS warm {k}": make(renorm_cache=True, renorm_fused=True, whiten="ns_warm", ns_iters=k)
+       for k in (1, 2, 3)},
+    "BW fast, Cholesky": make(renorm_cache=True, renorm_fused=True, fast=True),
+    "BW fast, NS 10": make(renorm_cache=True, renorm_fused=True, fast=True, whiten="ns", ns_iters=10),
+    "BW fast, Cholesky, side stream": make(renorm_cache=True, renorm_fused=True, fast=True, side_stream=True),
+    "BW fast, NS 10, side stream": make(renorm_cache=True, renorm_fused=True, fast=True, side_stream=True,
+                                        whiten="ns", ns_iters=10),
 }
 for name, layer in variants.items():
-    print(f"{name:28s} {time_ms(layer):6.3f} ms / layer (fwd+bwd)")
+    print(f"{name:32s} {time_ms(layer):6.3f} ms / layer (fwd+bwd)")
 
-layer = variants["BW, cache, fused backward"]
+layer = variants[sys.argv[1] if len(sys.argv) > 1 else "BW, cache, fused backward"]
 x = torch.randn(B, T, C, device="cuda", requires_grad=True)
 with profile(activities=[ProfilerActivity.CUDA]) as prof:
     for _ in range(20):

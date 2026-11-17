@@ -1,0 +1,6 @@
+batch 64 compile_glue True normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 15.74 ms/step (100-step blocks: 15.74, 15.74, 15.74), CPU issue 341.31 ms/step, summed kernel time 40.94 ms/step
+GPU span 16.45 ms/step, busy (any stream) 15.26 ms/step, per stream: 7: 14.86, 15: 4.01
+main stream idle: waiting on side stream 0.08 ms/step, other (CPU launch) 1.16 ms/step
+batch 64 compile_glue True normalization_type=full_bw bw_renorm=True bw_renorm_stats=batch bw_group_size=384 batch_center_mode=running_mean bw_momentum=0.7 bw_warmup=none bw_fix_factor=0.8 bw_post_norm=ln_noaffine: wall 15.74 ms/step (100-step blocks: 15.74, 15.75, 15.75), CPU issue 341.34 ms/step, summed kernel time 41.35 ms/step
+GPU span 16.29 ms/step, busy (any stream) 15.27 ms/step, per stream: 7: 14.87, 15: 4.00
+main stream idle: waiting on side stream 0.08 ms/step, other (CPU launch) 0.99 ms/step
